@@ -21,6 +21,43 @@ from app.ai_planner import ItineraryPlanner, PlaceData
 router = APIRouter(prefix="/journeys", tags=["Journeys"])
 
 
+@router.get(
+    "",
+    summary="List recent journeys",
+    description="List recent journeys to quickly discover valid journey IDs"
+)
+async def list_journeys(limit: int = 20):
+    """
+    List recent journeys.
+
+    Args:
+        limit: Maximum number of journeys to return
+
+    Returns:
+        List of journey summaries
+    """
+    journey_repo = get_journey_repository()
+    safe_limit = max(1, min(limit, 100))
+    journeys = await journey_repo.list_recent(limit=safe_limit)
+
+    results = []
+    for journey in journeys:
+        results.append({
+            "_id": str(journey.get("_id")),
+            "name": journey.get("name", "Unnamed Journey"),
+            "owner_id": journey.get("owner_id"),
+            "start_date": journey.get("start_date"),
+            "end_date": journey.get("end_date"),
+            "days_count": len(journey.get("days", [])),
+            "updated_at": journey.get("updated_at"),
+        })
+
+    return {
+        "journeys": results,
+        "count": len(results),
+    }
+
+
 @router.post(
     "/{journey_id}/ai-plan",
     response_model=AIPlanResponse,

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.database import connect_to_mongo, close_mongo_connection
-from app.routes import journeys, places
+from app.routes import journeys, places, debug
 
 
 @asynccontextmanager
@@ -84,6 +84,7 @@ app.add_middleware(
 # Include routers
 app.include_router(places.router, prefix="/api/v1")
 app.include_router(journeys.router, prefix="/api/v1")
+app.include_router(debug.router)
 
 
 @app.get("/", tags=["Health"])

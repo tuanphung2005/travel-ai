@@ -207,6 +207,19 @@ class JourneyRepository:
         """
         cursor = self.collection.find({"owner_id": owner_id})
         return await cursor.to_list(length=None)
+
+    async def list_recent(self, limit: int = 20) -> list[dict]:
+        """
+        List recent journeys.
+
+        Args:
+            limit: Maximum number of journeys to return
+
+        Returns:
+            List of journey documents sorted by newest first
+        """
+        cursor = self.collection.find({}).sort("_id", -1).limit(limit)
+        return await cursor.to_list(length=limit)
     
     async def update_days(
         self, 

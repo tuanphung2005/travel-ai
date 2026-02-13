@@ -72,6 +72,16 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 - ReDoc: http://localhost:8000/redoc
 - Health Check: http://localhost:8000/health
 
+### 6. Run API smoke test script
+
+`test_api.sh` requires a real journey ID from your current database.
+
+```bash
+./test_api.sh <journey_id>
+# or
+JOURNEY_ID=<journey_id> ./test_api.sh
+```
+
 ## API Endpoints
 
 ### Places
