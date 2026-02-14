@@ -151,3 +151,39 @@ class AIExplanation(BaseModel):
     style_adjustments: dict
     constraints_applied: list[str]
     place_selection_criteria: list[str]
+
+
+class CreateJourneyFromRelatedRequest(BaseModel):
+    """Request body for creating a new journey from related places."""
+    name: str = Field(min_length=1, max_length=200)
+    owner_id: str = Field(min_length=1, max_length=200)
+    start_date: datetime
+    end_date: datetime
+    seed_place_id: Optional[str] = Field(
+        default=None,
+        description="Optional seed place ID to find nearby and related places"
+    )
+    max_places: int = Field(
+        default=12,
+        ge=3,
+        le=30,
+        description="Maximum number of places to include in journey planning"
+    )
+    hours_per_day: float = Field(default=8, ge=1, le=16)
+    travel_style: Literal["sightseeing", "relaxing", "balanced"] = "balanced"
+    auto_plan: bool = Field(
+        default=True,
+        description="If true, runs AI planner and fills journey days immediately"
+    )
+    members: list[str] = []
+
+
+class CreateJourneyFromRelatedResponse(BaseModel):
+    """Response for journey creation from related places."""
+    journey_id: str
+    journey_name: str
+    selected_places_count: int
+    selected_place_ids: list[str]
+    auto_planned: bool
+    total_days: int
+    planning_notes: list[str] = []
