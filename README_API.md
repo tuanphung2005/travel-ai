@@ -96,6 +96,7 @@ JOURNEY_ID=<journey_id> ./test_api.sh
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/api/v1/journeys/auto-create-related` | Create new journey from related places |
 | GET | `/api/v1/journeys/{id}` | Get journey details |
 | POST | `/api/v1/journeys/{id}/ai-plan` | Generate AI itinerary |
 | GET | `/api/v1/journeys/{id}/ai-explain` | Get AI explanation |
@@ -129,6 +130,24 @@ POST /api/v1/journeys/{journey_id}/ai-plan
     "hours_per_day": 8,
     "travel_style": "balanced",
     "place_ids": ["6953524453ece5575927223a", "..."]
+}
+```
+
+### Auto-Create Journey from Related Places Example
+
+```json
+POST /api/v1/journeys/auto-create-related
+{
+  "name": "Weekend Related Places",
+  "owner_id": "user-123",
+  "start_date": "2026-03-01T00:00:00Z",
+  "end_date": "2026-03-03T00:00:00Z",
+  "seed_place_id": "6953524453ece5575927223a",
+  "max_places": 10,
+  "hours_per_day": 8,
+  "travel_style": "balanced",
+  "auto_plan": true,
+  "members": []
 }
 ```
 

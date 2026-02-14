@@ -220,6 +220,22 @@ class JourneyRepository:
         """
         cursor = self.collection.find({}).sort("_id", -1).limit(limit)
         return await cursor.to_list(length=limit)
+
+    async def create_journey(self, journey_doc: dict) -> Optional[str]:
+        """
+        Create a new journey document.
+
+        Args:
+            journey_doc: Journey document payload
+
+        Returns:
+            Inserted journey ID as string or None on failure
+        """
+        try:
+            result = await self.collection.insert_one(journey_doc)
+            return str(result.inserted_id)
+        except Exception:
+            return None
     
     async def update_days(
         self, 

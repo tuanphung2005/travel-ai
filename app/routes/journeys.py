@@ -7,16 +7,23 @@ from datetime import datetime
 from app.models import (
     AIPlanRequest,
     AIPlanResponse,
-    AIDayPlan,
-    AIStopSuggestion,
     AIExplanation,
+    CreateJourneyFromRelatedRequest,
+    CreateJourneyFromRelatedResponse,
 )
 from app.repositories import (
     get_journey_repository,
     get_place_repository,
-    PlaceRepository,
 )
-from app.ai_planner import ItineraryPlanner, PlaceData
+from app.ai_planner import ItineraryPlanner
+from app.services.journey_planning import (
+    parse_iso_datetime,
+    create_initial_days,
+    map_day_plans_to_db,
+    map_day_plans_to_response,
+    select_related_place_docs,
+    to_place_data_list,
+)
 
 router = APIRouter(prefix="/journeys", tags=["Journeys"])
 
@@ -56,6 +63,108 @@ async def list_journeys(limit: int = 20):
         "journeys": results,
         "count": len(results),
     }
+
+
+@router.post(
+    "/auto-create-related",
+    response_model=CreateJourneyFromRelatedResponse,
+    summary="Create a new journey from related places",
+    description="""
+    Create a journey from related places and optionally auto-generate day plans.
+
+    Related place selection strategy:
+    - If `seed_place_id` is provided: prioritize nearby places and same-category places
+    - Always merge with top approved places as fallback
+    - Rank by rating, review count, category match, and tag overlap
+
+    This endpoint does not require any database schema changes.
+    """
+)
+async def create_journey_from_related_places(request: CreateJourneyFromRelatedRequest):
+    """Create a new journey and optionally auto-plan it using related places."""
+    if request.end_date < request.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="end_date must be greater than or equal to start_date"
+        )
+
+    journey_repo = get_journey_repository()
+    place_repo = get_place_repository()
+    try:
+        selected_docs = await select_related_place_docs(
+            place_repo=place_repo,
+            seed_place_id=request.seed_place_id,
+            max_places=request.max_places,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    try:
+        days, total_days = create_initial_days(
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    now = datetime.utcnow()
+    journey_doc = {
+        "name": request.name,
+        "owner_id": request.owner_id,
+        "members": request.members,
+        "start_date": request.start_date,
+        "end_date": request.end_date,
+        "days": days,
+        "total_budget": 0,
+        "status": "DRAFT",
+        "updated_at": now,
+    }
+
+    journey_id = await journey_repo.create_journey(journey_doc)
+    if not journey_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create journey"
+        )
+
+    planning_notes: list[str] = []
+
+    if request.auto_plan:
+        places = to_place_data_list(selected_docs)
+
+        planner = ItineraryPlanner(
+            places=places,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            hours_per_day=request.hours_per_day,
+            travel_style=request.travel_style,
+        )
+        day_plans = planner.plan()
+
+        db_days = map_day_plans_to_db(day_plans)
+        await journey_repo.update_days(journey_id, db_days)
+        planning_notes = planner.planning_notes
+
+    return CreateJourneyFromRelatedResponse(
+        journey_id=journey_id,
+        journey_name=request.name,
+        selected_places_count=len(selected_docs),
+        selected_place_ids=[str(doc["_id"]) for doc in selected_docs],
+        auto_planned=request.auto_plan,
+        total_days=total_days,
+        planning_notes=planning_notes,
+    )
 
 
 @router.post(
@@ -136,10 +245,7 @@ async def generate_ai_plan(
         )
     
     # Step 3: Convert to PlaceData for AI planning
-    places: list[PlaceData] = [
-        PlaceRepository.to_place_data(doc) 
-        for doc in place_docs
-    ]
+    places = to_place_data_list(place_docs)
     
     # Step 4: Parse journey dates
     start_date = journey.get("start_date")
@@ -152,10 +258,8 @@ async def generate_ai_plan(
         )
     
     # Ensure dates are datetime objects
-    if isinstance(start_date, str):
-        start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-    if isinstance(end_date, str):
-        end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+    start_date = parse_iso_datetime(start_date)
+    end_date = parse_iso_datetime(end_date)
     
     # Step 5: Run AI planning algorithm
     planner = ItineraryPlanner(
@@ -169,56 +273,10 @@ async def generate_ai_plan(
     day_plans = planner.plan()
     
     # Step 6: Convert to response format
-    response_days = []
-    for day_plan in day_plans:
-        stops = [
-            AIStopSuggestion(
-                place_id=stop["place_id"],
-                place_name=stop["place_name"],
-                estimated_duration_minutes=stop["estimated_duration_minutes"],
-                reason=stop["reason"],
-                order=stop["order"],
-                travel_time_from_previous_minutes=stop["travel_time_from_previous_minutes"],
-                distance_from_previous_km=stop["distance_from_previous_km"],
-                latitude=stop["latitude"],
-                longitude=stop["longitude"],
-                category=stop["category"],
-                rating=stop["rating"],
-            )
-            for stop in day_plan["stops"]
-        ]
-        
-        response_days.append(AIDayPlan(
-            day_number=day_plan["day_number"],
-            date=day_plan["date"],
-            stops=stops,
-            total_duration_minutes=day_plan["total_duration_minutes"],
-            total_travel_time_minutes=day_plan["total_travel_time_minutes"],
-            summary=day_plan["summary"],
-        ))
+    response_days = map_day_plans_to_response(day_plans)
     
     # Step 7: Optionally update the journey in database
-    # Convert day_plans to the format expected by MongoDB
-    db_days = []
-    for day_plan in day_plans:
-        db_stops = [
-            {
-                "place_id": stop["place_id"],
-                "place_name": stop["place_name"],
-                "estimated_duration_minutes": stop["estimated_duration_minutes"],
-                "reason": stop["reason"],
-                "order": stop["order"],
-                "latitude": stop["latitude"],
-                "longitude": stop["longitude"],
-                "category": stop["category"],
-            }
-            for stop in day_plan["stops"]
-        ]
-        db_days.append({
-            "day_number": day_plan["day_number"],
-            "date": day_plan["date"],
-            "stops": db_stops,
-        })
+    db_days = map_day_plans_to_db(day_plans)
     
     await journey_repo.update_days(journey_id, db_days)
     
