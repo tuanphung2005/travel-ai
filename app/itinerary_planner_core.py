@@ -1,4 +1,5 @@
 """Core itinerary planner implementation."""
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -7,12 +8,13 @@ from app.planning_utils import (
     TRAVEL_STYLE_CONFIG,
     AVERAGE_TRAVEL_SPEED_KMH,
     build_distance_matrix,
-    calculate_place_score,
-    cluster_places_by_proximity,
+    blended_mood_score,
     optimize_route_order,
+    route_distance_km,
     estimate_travel_time,
     calculate_stop_duration,
     generate_stop_reason,
+    normalize_category,
 )
 
 
@@ -26,6 +28,15 @@ class ItineraryPlanner:
         end_date: datetime,
         hours_per_day: float,
         travel_style: str,
+        total_budget_vnd: int,
+        daily_budget_vnd: int,
+        mode: str,
+        mood: Optional[str] = None,
+        mood_distribution: Optional[dict[str, float]] = None,
+        start_location: Optional[dict[str, float]] = None,
+        max_places_per_day: int = 5,
+        must_include_categories: Optional[list[str]] = None,
+        exclude_categories: Optional[list[str]] = None,
     ):
         self.places = places
         self.start_date = start_date
@@ -33,63 +44,179 @@ class ItineraryPlanner:
         self.hours_per_day = hours_per_day
         self.travel_style = travel_style
         self.config = TRAVEL_STYLE_CONFIG[travel_style]
+        self.total_budget_vnd = max(0, int(total_budget_vnd))
+        self.daily_budget_vnd = max(0, int(daily_budget_vnd))
+        self.mode = mode
+        self.mood = mood
+        self.mood_distribution = mood_distribution or {}
+        self.start_location = start_location
+        self.max_places_per_day = max(1, min(5, int(max_places_per_day)))
+        self.must_include_categories = {c.upper() for c in (must_include_categories or [])}
+        self.exclude_categories = {c.upper() for c in (exclude_categories or [])}
 
         self.num_days = (end_date - start_date).days + 1
         self.distance_matrix = build_distance_matrix(places)
         self.planning_notes: list[str] = []
+        self.candidate_pool_size = 0
+        self.generation_time_ms = 0
+
+        if self.mode == "solo":
+            selected_mood = self.mood or "NATURE_EXPLORE"
+            self.mood_distribution = {selected_mood: 1.0}
+
+    def _matches_category_filters(self, place: PlaceData) -> bool:
+        normalized = normalize_category(place.category, place.tags)
+        if self.exclude_categories and normalized in self.exclude_categories:
+            return False
+        return True
+
+    def _build_candidates(self) -> list[tuple[PlaceData, float, dict[str, float]]]:
+        filtered_places = [place for place in self.places if self._matches_category_filters(place)]
+
+        within_budget = [
+            place for place in filtered_places
+            if place.estimated_cost_vnd <= self.daily_budget_vnd
+        ]
+
+        if "RESET_HEALING" in self.mood_distribution:
+            healing_strict = [place for place in within_budget if place.healing_score >= 4]
+            if len(healing_strict) >= min(6, len(within_budget)):
+                within_budget = healing_strict
+            else:
+                within_budget = [place for place in within_budget if place.healing_score >= 3]
+                self.planning_notes.append(
+                    "RESET_HEALING fallback: expanded healing_score threshold to >=3 due to limited pool."
+                )
+
+        scored: list[tuple[PlaceData, float, dict[str, float]]] = []
+        for place in within_budget:
+            final_score, breakdown = blended_mood_score(place, self.mood_distribution)
+            scored.append((place, final_score, breakdown))
+
+        scored.sort(
+            key=lambda entry: (
+                entry[1],
+                entry[0].rating,
+                entry[0].review_count,
+            ),
+            reverse=True,
+        )
+
+        top_k = min(50, max(30, self.num_days * self.max_places_per_day * 6))
+        top_candidates = scored[:top_k]
+        self.candidate_pool_size = len(top_candidates)
+        return top_candidates
+
+    def _pick_places_for_day(
+        self,
+        candidates: list[tuple[PlaceData, float, dict[str, float]]],
+        used_place_ids: set[str],
+    ) -> list[tuple[PlaceData, float, dict[str, float]]]:
+        available_minutes = int(self.hours_per_day * 60)
+        selected: list[tuple[PlaceData, float, dict[str, float]]] = []
+        category_counts: dict[str, int] = {}
+        spent = 0
+        consumed_minutes = 0
+
+        unused = [entry for entry in candidates if entry[0].id not in used_place_ids]
+
+        for required_category in self.must_include_categories:
+            pick = None
+            for entry in unused:
+                cat = normalize_category(entry[0].category, entry[0].tags)
+                if cat == required_category and entry[0].id not in {p[0].id for p in selected}:
+                    pick = entry
+                    break
+            if pick is None:
+                continue
+
+            place = pick[0]
+            projected_spent = spent + place.estimated_cost_vnd
+            projected_minutes = consumed_minutes + calculate_stop_duration(place, self.travel_style)
+            if projected_spent <= self.daily_budget_vnd and projected_minutes <= available_minutes:
+                selected.append(pick)
+                category_counts[required_category] = category_counts.get(required_category, 0) + 1
+                spent = projected_spent
+                consumed_minutes = projected_minutes
+
+        ranked = sorted(
+            unused,
+            key=lambda item: item[1] / max(1, item[0].estimated_cost_vnd),
+            reverse=True,
+        )
+
+        for entry in ranked:
+            if len(selected) >= self.max_places_per_day:
+                break
+
+            place = entry[0]
+            if place.id in {p[0].id for p in selected}:
+                continue
+
+            category = normalize_category(place.category, place.tags)
+            if category_counts.get(category, 0) >= 2:
+                continue
+
+            duration = calculate_stop_duration(place, self.travel_style)
+            projected_spent = spent + place.estimated_cost_vnd
+            projected_minutes = consumed_minutes + duration + self.config["buffer_time_minutes"]
+
+            if projected_spent > self.daily_budget_vnd:
+                continue
+            if projected_minutes > available_minutes:
+                continue
+
+            selected.append(entry)
+            category_counts[category] = category_counts.get(category, 0) + 1
+            spent = projected_spent
+            consumed_minutes = projected_minutes
+
+        return selected
 
     def plan(self) -> list[dict]:
         """Generate the complete itinerary."""
+        started_at = time.perf_counter()
         if not self.places:
             self.planning_notes.append("No places provided for planning.")
             return self._create_empty_days()
 
         self.planning_notes.append(
             f"Planning {len(self.places)} places over {self.num_days} days "
-            f"with {self.hours_per_day} hours/day in '{self.travel_style}' style."
+            f"with mood distribution {self.mood_distribution} and budget {self.daily_budget_vnd:,} VND/day."
         )
 
-        scored_places = [
-            (place, calculate_place_score(place, self.travel_style))
-            for place in self.places
-        ]
-        scored_places.sort(key=lambda x: x[1], reverse=True)
-
-        self.planning_notes.append(
-            f"Top rated place: {scored_places[0][0].name} (score: {scored_places[0][1]})"
-        )
-
-        clusters = cluster_places_by_proximity(
-            self.places,
-            self.distance_matrix,
-            self.num_days,
-        )
-
-        self.planning_notes.append(
-            f"Created {len(clusters)} geographic clusters for {self.num_days} days."
-        )
+        candidates = self._build_candidates()
+        self.planning_notes.append(f"Candidate pool size after filtering/ranking: {self.candidate_pool_size}")
 
         day_plans = []
-        available_minutes = int(self.hours_per_day * 60)
+        used_place_ids: set[str] = set()
+        total_spent = 0
 
         for day_idx in range(self.num_days):
             day_number = day_idx + 1
             day_date = self.start_date + timedelta(days=day_idx)
 
-            if day_idx < len(clusters):
-                day_places = clusters[day_idx]
-            else:
-                day_places = []
+            selected = self._pick_places_for_day(candidates, used_place_ids)
+            selected_places = [entry[0] for entry in selected]
+            score_by_id = {entry[0].id: entry[1] for entry in selected}
+            breakdown_by_id = {entry[0].id: entry[2] for entry in selected}
 
-            if day_places:
-                optimized_places = optimize_route_order(day_places, self.distance_matrix)
+            if selected_places:
+                optimized_places = optimize_route_order(
+                    selected_places,
+                    self.distance_matrix,
+                    start_location=self.start_location,
+                    two_opt_enabled=True,
+                )
             else:
                 optimized_places = []
 
             stops = []
             total_duration = 0
             total_travel_time = 0
+            total_estimated_cost_vnd = 0
             previous_place: Optional[PlaceData] = None
+            day_explanations: list[str] = []
 
             for order, place in enumerate(optimized_places, 1):
                 if previous_place:
@@ -101,32 +228,14 @@ class ItineraryPlanner:
 
                 duration = calculate_stop_duration(place, self.travel_style)
 
-                projected_total = (
-                    total_duration
-                    + total_travel_time
-                    + travel_time
-                    + duration
-                    + self.config["buffer_time_minutes"]
-                )
-
-                if projected_total > available_minutes:
-                    self.planning_notes.append(
-                        f"Day {day_number}: Skipped {place.name} due to time constraints."
-                    )
-                    continue
-
-                if len(stops) >= self.config["max_stops_per_day"]:
-                    self.planning_notes.append(
-                        f"Day {day_number}: Reached max stops ({self.config['max_stops_per_day']})."
-                    )
-                    break
-
                 reason = generate_stop_reason(
                     place,
                     self.travel_style,
                     day_number,
                     order,
                     distance,
+                    mood_label=", ".join(self.mood_distribution.keys()),
+                    final_score=score_by_id.get(place.id, 0.0),
                 )
 
                 stops.append({
@@ -141,17 +250,37 @@ class ItineraryPlanner:
                     "longitude": place.longitude,
                     "category": place.category,
                     "rating": place.rating,
+                    "estimated_cost_vnd": place.estimated_cost_vnd,
+                    "final_score": score_by_id.get(place.id, 0.0),
+                    "mood_score_breakdown": breakdown_by_id.get(place.id, {}),
                 })
 
                 total_duration += duration
                 total_travel_time += travel_time
+                total_estimated_cost_vnd += place.estimated_cost_vnd
                 previous_place = place
+                used_place_ids.add(place.id)
+
+            total_distance = route_distance_km(optimized_places, self.distance_matrix)
+            total_spent += total_estimated_cost_vnd
+            remaining_today = max(0, self.daily_budget_vnd - total_estimated_cost_vnd)
+            day_explanations.append(
+                f"Spent {total_estimated_cost_vnd:,} VND; remaining {remaining_today:,} VND."
+            )
+            if "RESET_HEALING" in self.mood_distribution and stops:
+                healing_ratio = sum(
+                    1 for p in optimized_places if p.healing_score >= 4
+                ) / len(optimized_places)
+                day_explanations.append(
+                    f"RESET_HEALING quality: {round(healing_ratio * 100)}% stops with healing_score >= 4."
+                )
 
             if stops:
                 summary = (
                     f"Day {day_number}: {len(stops)} stops, "
                     f"{total_duration} mins visiting, "
-                    f"{total_travel_time} mins traveling."
+                    f"{total_travel_time} mins traveling, "
+                    f"{total_distance} km route, {total_estimated_cost_vnd:,} VND."
                 )
             else:
                 summary = f"Day {day_number}: Free day for personal exploration."
@@ -162,12 +291,25 @@ class ItineraryPlanner:
                 "stops": stops,
                 "total_duration_minutes": total_duration,
                 "total_travel_time_minutes": total_travel_time,
+                "total_estimated_cost_vnd": total_estimated_cost_vnd,
+                "total_distance_km": total_distance,
+                "spent_today": total_estimated_cost_vnd,
+                "remaining_today": remaining_today,
+                "saved_vs_budget": remaining_today,
+                "explanations": day_explanations,
                 "summary": summary,
             })
 
         self.planning_notes.append(
             f"Planning complete. Total stops: {sum(len(d['stops']) for d in day_plans)}"
         )
+        if self.total_budget_vnd > 0:
+            self.planning_notes.append(
+                f"Total spent estimate: {total_spent:,} VND. Savings vs total budget: {max(0, self.total_budget_vnd - total_spent):,} VND."
+            )
+
+        self.generation_time_ms = int((time.perf_counter() - started_at) * 1000)
+        self.planning_notes.append(f"generation_time_ms={self.generation_time_ms}")
 
         return day_plans
 
@@ -181,6 +323,12 @@ class ItineraryPlanner:
                 "total_duration_minutes": 0,
                 "total_travel_time_minutes": 0,
                 "summary": f"Day {i + 1}: No places selected for planning.",
+                "total_estimated_cost_vnd": 0,
+                "total_distance_km": 0.0,
+                "spent_today": 0,
+                "remaining_today": self.daily_budget_vnd,
+                "saved_vs_budget": self.daily_budget_vnd,
+                "explanations": ["No feasible places within constraints."],
             }
             for i in range(self.num_days)
         ]
@@ -190,8 +338,8 @@ class ItineraryPlanner:
         return {
             "algorithm_description": (
                 "This itinerary was generated using a deterministic planning algorithm "
-                "that considers geographic proximity, place ratings, travel style preferences, "
-                "and time constraints. No machine learning or randomness is involved."
+                "that applies mood-based scoring, budget-constrained greedy packing, "
+                "and route optimization with nearest-neighbor + 2-opt refinement."
             ),
             "distance_calculation": (
                 "Distances between places are calculated using the Haversine formula, "
@@ -199,9 +347,8 @@ class ItineraryPlanner:
                 f"Average travel speed assumed: {AVERAGE_TRAVEL_SPEED_KMH} km/h."
             ),
             "grouping_strategy": (
-                "Places are grouped into daily clusters based on geographic proximity. "
-                "The algorithm selects seed places that are geographically spread out, "
-                "then assigns remaining places to the nearest cluster."
+                "Places are selected day-by-day from a global candidate pool while enforcing "
+                "budget, per-day stop cap, and category diversity constraints."
             ),
             "style_adjustments": {
                 "current_style": self.travel_style,
@@ -209,14 +356,15 @@ class ItineraryPlanner:
                 "explanation": TRAVEL_STYLE_CONFIG[self.travel_style]["description"],
             },
             "constraints_applied": [
-                f"Maximum {self.config['max_stops_per_day']} stops per day",
-                f"Minimum {self.config['min_stops_per_day']} stops per day (if places available)",
+                f"Maximum {self.max_places_per_day} stops per day",
                 f"Available time: {self.hours_per_day} hours/day",
+                f"Daily budget cap: {self.daily_budget_vnd:,} VND",
                 f"Buffer time between stops: {self.config['buffer_time_minutes']} minutes",
             ],
             "place_selection_criteria": [
-                "Rating (40% weight): Higher rated places preferred",
-                "Review count (20% weight): More reviews = more reliable",
-                "Category fit (40% weight): Based on travel style",
+                "Mood score: weighted by selected mood or group mood distribution",
+                "Budget fit: only places with feasible cost are considered",
+                "Selection utility: greedy by score/cost ratio",
+                "Category diversity: no more than 2 stops in same category/day",
             ],
         }

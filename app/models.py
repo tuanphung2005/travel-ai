@@ -2,9 +2,12 @@
 Pydantic models for request/response validation.
 These models define the data structure for the API.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Optional
 from datetime import datetime
+
+
+Mood = Literal["RESET_HEALING", "CHILL_CAFE", "NATURE_EXPLORE", "FOOD_LOCAL"]
 
 
 # ============================================
@@ -23,13 +26,18 @@ class Place(BaseModel):
     google_id: Optional[str] = None
     name: str
     description: Optional[str] = None
-    category: Literal["ATTRACTION", "HOTEL", "RESTAURANT"]
+    category: str
     address: Optional[str] = None
     location: Location
     rating: Optional[float] = 0.0
     reviewCount: Optional[int] = 0
     priceLevel: Optional[int] = 0
     tags: list[str] = []
+    estimated_cost_vnd: Optional[int] = 0
+    avg_visit_duration_min: Optional[int] = 75
+    healing_score: Optional[int] = 3
+    crowd_level: Optional[int] = 3
+    image_url: Optional[str] = None
     
     class Config:
         populate_by_name = True
@@ -94,15 +102,47 @@ class AIPlanRequest(BaseModel):
         place_ids: Optional list of specific place IDs to include.
                    If not provided, uses all places in the journey.
     """
-    hours_per_day: float = Field(default=8, ge=1, le=16, description="Available hours per day")
+    total_days: Optional[int] = Field(default=None, ge=1, le=4)
+    total_budget_vnd: int = Field(ge=0, description="Total trip budget in VND")
+    daily_budget_vnd: int = Field(ge=0, description="Daily budget cap in VND")
+    mode: Literal["solo", "group"] = Field(default="solo")
+    requester_user_id: Optional[str] = Field(default=None, description="Caller user ID for authorization checks")
+    mood: Optional[Mood] = Field(default=None, description="Required when mode is solo")
+    mood_distribution: Optional[dict[Mood, float]] = Field(
+        default=None,
+        description="Required when mode is group; weights should sum to ~1.0"
+    )
+    start_location: Optional[dict[str, float]] = Field(
+        default=None,
+        description="Optional starting point with keys: latitude, longitude"
+    )
+    max_places_per_day: int = Field(default=5, ge=1, le=5)
+    must_include_categories: Optional[list[str]] = None
+    exclude_categories: Optional[list[str]] = None
+
+    hours_per_day: float = Field(default=8, ge=1, le=16, description="Deprecated compatibility field")
     travel_style: Literal["sightseeing", "relaxing", "balanced"] = Field(
         default="balanced",
-        description="Travel style preference"
+        description="Deprecated compatibility field"
     )
     place_ids: Optional[list[str]] = Field(
         default=None,
         description="Specific place IDs to plan. If empty, AI will suggest from all places."
     )
+
+    @model_validator(mode="after")
+    def validate_mode_fields(self):
+        if self.mode == "solo" and self.mood is None:
+            raise ValueError("mood is required when mode='solo'")
+
+        if self.mode == "group":
+            if not self.mood_distribution:
+                raise ValueError("mood_distribution is required when mode='group'")
+            total_weight = sum(self.mood_distribution.values())
+            if total_weight <= 0:
+                raise ValueError("mood_distribution total weight must be > 0")
+
+        return self
 
 
 class AIStopSuggestion(BaseModel):
@@ -118,6 +158,9 @@ class AIStopSuggestion(BaseModel):
     longitude: float
     category: str
     rating: float
+    estimated_cost_vnd: int = 0
+    final_score: float = 0.0
+    mood_score_breakdown: dict[Mood, float] = Field(default_factory=dict)
 
 
 class AIDayPlan(BaseModel):
@@ -127,6 +170,12 @@ class AIDayPlan(BaseModel):
     stops: list[AIStopSuggestion]
     total_duration_minutes: int
     total_travel_time_minutes: int
+    total_estimated_cost_vnd: int
+    total_distance_km: float
+    spent_today: int
+    remaining_today: int
+    saved_vs_budget: int
+    explanations: list[str] = []
     summary: str
 
 
@@ -135,8 +184,14 @@ class AIPlanResponse(BaseModel):
     journey_id: str
     journey_name: str
     total_days: int
-    travel_style: str
-    hours_per_day: float
+    mode: Literal["solo", "group"]
+    mood_used: Optional[Mood] = None
+    mood_distribution_used: Optional[dict[Mood, float]] = None
+    total_budget_vnd: int
+    daily_budget_vnd: int
+    generated_at: datetime
+    candidate_pool_size: int
+    generation_time_ms: int
     days: list[AIDayPlan]
     planning_notes: list[str]
     algorithm_version: str = "1.0.0"
@@ -171,6 +226,10 @@ class CreateJourneyFromRelatedRequest(BaseModel):
     )
     hours_per_day: float = Field(default=8, ge=1, le=16)
     travel_style: Literal["sightseeing", "relaxing", "balanced"] = "balanced"
+    total_budget_vnd: int = 0
+    daily_budget_vnd: int = 0
+    mode: Literal["solo", "group"] = "solo"
+    mood: Optional[Mood] = "NATURE_EXPLORE"
     auto_plan: bool = Field(
         default=True,
         description="If true, runs AI planner and fills journey days immediately"
