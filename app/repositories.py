@@ -156,6 +156,19 @@ class PlaceRepository:
             PlaceData instance
         """
         coords = doc.get("location", {}).get("coordinates", [0, 0])
+        price_level = int(doc.get("priceLevel", 0) or 0)
+        fallback_cost = {
+            0: 80000,
+            1: 120000,
+            2: 220000,
+            3: 380000,
+            4: 600000,
+        }.get(price_level, 150000)
+
+        tags = [str(tag).strip().lower() for tag in doc.get("tags", []) if str(tag).strip()]
+        inferred_healing = 4 if any(tag in {"healing", "nature", "quiet", "park", "spa"} for tag in tags) else 3
+        inferred_crowd = 2 if any(tag in {"quiet", "hidden", "less-crowded"} for tag in tags) else 3
+
         return PlaceData(
             id=str(doc["_id"]),
             name=doc.get("name", "Unknown"),
@@ -165,6 +178,11 @@ class PlaceRepository:
             rating=doc.get("rating", 0.0),
             review_count=doc.get("reviewCount", 0),
             tags=doc.get("tags", []),
+            estimated_cost_vnd=int(doc.get("estimated_cost_vnd", fallback_cost) or fallback_cost),
+            avg_visit_duration_min=int(doc.get("avg_visit_duration_min", 75) or 75),
+            healing_score=int(doc.get("healing_score", inferred_healing) or inferred_healing),
+            crowd_level=int(doc.get("crowd_level", inferred_crowd) or inferred_crowd),
+            image_url=doc.get("image_url"),
         )
 
 

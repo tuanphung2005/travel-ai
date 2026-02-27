@@ -47,6 +47,9 @@ def map_day_plans_to_db(day_plans: list[dict]) -> list[dict]:
                 "latitude": stop["latitude"],
                 "longitude": stop["longitude"],
                 "category": stop["category"],
+                "estimated_cost_vnd": stop.get("estimated_cost_vnd", 0),
+                "final_score": stop.get("final_score", 0.0),
+                "mood_score_breakdown": stop.get("mood_score_breakdown", {}),
             }
             for stop in day_plan["stops"]
         ]
@@ -75,6 +78,9 @@ def map_day_plans_to_response(day_plans: list[dict]) -> list[AIDayPlan]:
                 longitude=stop["longitude"],
                 category=stop["category"],
                 rating=stop["rating"],
+                estimated_cost_vnd=stop.get("estimated_cost_vnd", 0),
+                final_score=stop.get("final_score", 0.0),
+                mood_score_breakdown=stop.get("mood_score_breakdown", {}),
             )
             for stop in day_plan["stops"]
         ]
@@ -85,6 +91,12 @@ def map_day_plans_to_response(day_plans: list[dict]) -> list[AIDayPlan]:
             stops=stops,
             total_duration_minutes=day_plan["total_duration_minutes"],
             total_travel_time_minutes=day_plan["total_travel_time_minutes"],
+            total_estimated_cost_vnd=day_plan.get("total_estimated_cost_vnd", 0),
+            total_distance_km=day_plan.get("total_distance_km", 0.0),
+            spent_today=day_plan.get("spent_today", 0),
+            remaining_today=day_plan.get("remaining_today", 0),
+            saved_vs_budget=day_plan.get("saved_vs_budget", 0),
+            explanations=day_plan.get("explanations", []),
             summary=day_plan["summary"],
         ))
 

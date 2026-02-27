@@ -16,6 +16,8 @@ from app.repositories import (
     get_place_repository,
 )
 from app.ai_planner import ItineraryPlanner
+from app.planning_types import PlaceData
+from app.planning_utils import optimize_route_order, build_distance_matrix, estimate_travel_time
 from app.services.journey_planning import (
     parse_iso_datetime,
     create_initial_days,
@@ -149,6 +151,15 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
             end_date=request.end_date,
             hours_per_day=request.hours_per_day,
             travel_style=request.travel_style,
+            total_budget_vnd=request.total_budget_vnd,
+            daily_budget_vnd=request.daily_budget_vnd,
+            mode=request.mode,
+            mood=request.mood,
+            mood_distribution=None,
+            start_location=None,
+            max_places_per_day=5,
+            must_include_categories=None,
+            exclude_categories=None,
         )
         day_plans = planner.plan()
 
@@ -214,6 +225,15 @@ async def generate_ai_plan(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Journey with ID '{journey_id}' not found"
         )
+
+    if request.mode == "group":
+        requester = (request.requester_user_id or "").strip()
+        owner = str(journey.get("owner_id", "")).strip()
+        if requester and owner and requester != owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only journey owner can regenerate itinerary in group mode"
+            )
     
     # Step 2: Get places for planning
     if request.place_ids and len(request.place_ids) > 0:
@@ -260,6 +280,19 @@ async def generate_ai_plan(
     # Ensure dates are datetime objects
     start_date = parse_iso_datetime(start_date)
     end_date = parse_iso_datetime(end_date)
+
+    total_days = (end_date.date() - start_date.date()).days + 1
+    if total_days < 1 or total_days > 4:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Journey total days must be between 1 and 4"
+        )
+
+    if request.total_days is not None and request.total_days != total_days:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Request total_days={request.total_days} does not match journey range ({total_days})"
+        )
     
     # Step 5: Run AI planning algorithm
     planner = ItineraryPlanner(
@@ -267,7 +300,16 @@ async def generate_ai_plan(
         start_date=start_date,
         end_date=end_date,
         hours_per_day=request.hours_per_day,
-        travel_style=request.travel_style
+        travel_style=request.travel_style,
+        total_budget_vnd=request.total_budget_vnd,
+        daily_budget_vnd=request.daily_budget_vnd,
+        mode=request.mode,
+        mood=request.mood,
+        mood_distribution=request.mood_distribution,
+        start_location=request.start_location,
+        max_places_per_day=request.max_places_per_day,
+        must_include_categories=request.must_include_categories,
+        exclude_categories=request.exclude_categories,
     )
     
     day_plans = planner.plan()
@@ -279,16 +321,46 @@ async def generate_ai_plan(
     db_days = map_day_plans_to_db(day_plans)
     
     await journey_repo.update_days(journey_id, db_days)
+
+    planning_event = {
+        "tripId": journey_id,
+        "userId": request.requester_user_id or journey.get("owner_id"),
+        "mode": request.mode,
+        "mood": request.mood,
+        "mood_distribution": planner.mood_distribution,
+        "budgets": {
+            "total_budget_vnd": request.total_budget_vnd,
+            "daily_budget_vnd": request.daily_budget_vnd,
+        },
+        "candidate_pool_size": planner.candidate_pool_size,
+        "selected_places": [
+            {
+                "day": day.get("day_number"),
+                "place_id": stop.get("place_id"),
+                "score": stop.get("final_score", 0.0),
+            }
+            for day in day_plans
+            for stop in day.get("stops", [])
+        ],
+        "time_ms": planner.generation_time_ms,
+    }
+    print(f"[AI_PLANNING_EVENT] {planning_event}")
     
     return AIPlanResponse(
         journey_id=journey_id,
         journey_name=journey.get("name", "Unnamed Journey"),
         total_days=len(response_days),
-        travel_style=request.travel_style,
-        hours_per_day=request.hours_per_day,
+        mode=request.mode,
+        mood_used=request.mood,
+        mood_distribution_used=planner.mood_distribution,
+        total_budget_vnd=request.total_budget_vnd,
+        daily_budget_vnd=request.daily_budget_vnd,
+        generated_at=datetime.utcnow(),
+        candidate_pool_size=planner.candidate_pool_size,
+        generation_time_ms=planner.generation_time_ms,
         days=response_days,
         planning_notes=planner.planning_notes,
-        algorithm_version="1.0.0",
+        algorithm_version="2.0.0",
     )
 
 
@@ -527,3 +599,96 @@ async def remove_stop_from_day(
         )
     
     return {"message": f"Removed stop from day {day_number}"}
+
+
+@router.post(
+    "/{journey_id}/days/{day_number}/improve-route-order",
+    summary="Improve route order only",
+    description="Reorder existing day stops to reduce distance without regenerating itinerary"
+)
+async def improve_route_order_only(journey_id: str, day_number: int):
+    """Optimize stop order for one day and keep the same places."""
+    journey_repo = get_journey_repository()
+    journey = await journey_repo.get_by_id(journey_id)
+
+    if not journey:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Journey with ID '{journey_id}' not found"
+        )
+
+    day_doc = next(
+        (day for day in journey.get("days", []) if day.get("day_number") == day_number),
+        None,
+    )
+    if not day_doc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Day {day_number} not found in journey"
+        )
+
+    raw_stops = day_doc.get("stops", [])
+    if len(raw_stops) < 2:
+        return {"message": "No optimization needed", "distance_before_km": 0.0, "distance_after_km": 0.0}
+
+    place_like_stops: list[PlaceData] = []
+    for stop in raw_stops:
+        place_like_stops.append(
+            PlaceData(
+                id=stop.get("place_id"),
+                name=stop.get("place_name", "Unknown"),
+                latitude=float(stop.get("latitude", 0) or 0),
+                longitude=float(stop.get("longitude", 0) or 0),
+                category=stop.get("category", "ATTRACTION"),
+                rating=4.0,
+                review_count=0,
+                tags=[],
+                estimated_cost_vnd=int(stop.get("estimated_cost_vnd", 0) or 0),
+                avg_visit_duration_min=int(stop.get("estimated_duration_minutes", 75) or 75),
+                healing_score=3,
+                crowd_level=3,
+                image_url=None,
+            )
+        )
+
+    distance_matrix = build_distance_matrix(place_like_stops)
+    optimized = optimize_route_order(place_like_stops, distance_matrix)
+
+    def route_distance(route: list[PlaceData]) -> float:
+        total = 0.0
+        for index in range(1, len(route)):
+            total += distance_matrix[route[index - 1].id][route[index].id]
+        return round(total, 2)
+
+    before = route_distance(place_like_stops)
+    after = route_distance(optimized)
+
+    id_to_stop = {stop.get("place_id"): stop for stop in raw_stops}
+    reordered_stops: list[dict] = []
+    previous_place: PlaceData | None = None
+    for order, place in enumerate(optimized, 1):
+        stop_doc = dict(id_to_stop[place.id])
+        stop_doc["order"] = order
+        if previous_place:
+            distance = distance_matrix[previous_place.id][place.id]
+            stop_doc["distance_from_previous_km"] = round(distance, 2)
+            stop_doc["travel_time_from_previous_minutes"] = estimate_travel_time(distance)
+        else:
+            stop_doc["distance_from_previous_km"] = 0.0
+            stop_doc["travel_time_from_previous_minutes"] = 0
+        reordered_stops.append(stop_doc)
+        previous_place = place
+
+    success = await journey_repo.reorder_stops(journey_id, day_number, reordered_stops)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reorder stops"
+        )
+
+    return {
+        "message": f"Improved route order for day {day_number}",
+        "distance_before_km": before,
+        "distance_after_km": after,
+        "optimized": after <= before,
+    }
