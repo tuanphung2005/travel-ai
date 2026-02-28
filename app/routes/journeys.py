@@ -229,7 +229,12 @@ async def generate_ai_plan(
     if request.mode == "group":
         requester = (request.requester_user_id or "").strip()
         owner = str(journey.get("owner_id", "")).strip()
-        if requester and owner and requester != owner:
+        if not requester:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="requester_user_id is required in group mode"
+            )
+        if requester != owner:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only journey owner can regenerate itinerary in group mode"
@@ -343,6 +348,7 @@ async def generate_ai_plan(
             for stop in day.get("stops", [])
         ],
         "time_ms": planner.generation_time_ms,
+        "reason_codes": sorted(set(planner.reason_codes)),
     }
     print(f"[AI_PLANNING_EVENT] {planning_event}")
     
@@ -404,57 +410,52 @@ async def get_ai_explanation(journey_id: str):
         journey_id=journey_id,
         algorithm_description=(
             "This itinerary was generated using a deterministic planning algorithm "
-            "that considers geographic proximity, place ratings, travel style preferences, "
-            "and time constraints. No machine learning or randomness is involved. "
-            "The algorithm is fully reproducible given the same inputs."
+            "that applies mood scoring, budget constraints, score/cost greedy day packing, "
+            "and route optimization via nearest-neighbor + optional 2-opt improvement. "
+            "No machine learning or randomness is involved."
         ),
         distance_calculation=(
             "Distances between places are calculated using the Haversine formula, "
             "which computes the great-circle distance between two points on Earth's surface. "
-            "This accounts for the Earth's curvature and provides accurate distances "
-            "for navigation purposes. Average travel speed is assumed to be 25 km/h, "
-            "accounting for urban traffic, public transport, and walking."
+            "Average travel speed is assumed to be 25 km/h for travel-time estimation."
         ),
         grouping_strategy=(
-            "Places are grouped into daily clusters based on geographic proximity. "
-            "The algorithm selects seed places that are geographically spread out "
-            "(using a maximin strategy), then assigns remaining places to their nearest cluster. "
-            "This ensures each day's itinerary covers a specific geographic area, "
-            "minimizing travel time between stops."
+            "Places are filtered and ranked into a candidate pool, then selected day-by-day "
+            "from remaining places with constraints for budget, max places/day, and category diversity."
         ),
         style_adjustments={
             "sightseeing": {
                 "description": "Fast-paced exploration with more stops",
-                "base_duration": "45 minutes per stop",
-                "max_stops": 8,
+                "base_duration": "~45 minutes per stop",
+                "max_stops": 5,
                 "buffer_time": "10 minutes between stops"
             },
             "relaxing": {
                 "description": "Leisurely pace with fewer stops",
-                "base_duration": "120 minutes per stop",
-                "max_stops": 4,
+                "base_duration": "~120 minutes per stop",
+                "max_stops": 5,
                 "buffer_time": "30 minutes between stops"
             },
             "balanced": {
                 "description": "Moderate pace with balanced exploration",
-                "base_duration": "75 minutes per stop",
-                "max_stops": 6,
+                "base_duration": "~75 minutes per stop",
+                "max_stops": 5,
                 "buffer_time": "20 minutes between stops"
             }
         },
         constraints_applied=[
-            "Time constraint: Total daily activity must fit within specified hours",
-            "Stop limit: Maximum number of stops based on travel style",
-            "Travel time: Realistic travel times between consecutive stops",
-            "Rating priority: Higher-rated places are preferred",
-            "Geographic clustering: Nearby places grouped together"
+            "Hard cap: Maximum 5 stops per day",
+            "Budget cap: day total must not exceed daily budget",
+            "Total trip budget respected when provided",
+            "No duplicate places across days",
+            "Travel time and available hours/day must remain feasible"
         ],
         place_selection_criteria=[
-            "Rating (40% weight): Places with higher ratings are prioritized",
-            "Review count (20% weight): More reviews indicate reliability",
-            "Category fit (40% weight): Attractions favored for sightseeing, restaurants for relaxing",
-            "Geographic proximity: Places near each other scheduled on same day",
-            "Time feasibility: Only places that fit within available time are included"
+            "Mood score: weighted by solo mood or group mood distribution",
+            "Cost efficiency: greedy selection by finalScore/cost",
+            "RESET_HEALING rules: favor higher healing score and lower crowd",
+            "CHILL_CAFE rule: attempts at least one cafe/day if feasible",
+            "Route order: nearest-neighbor with optional 2-opt refinement"
         ]
     )
 

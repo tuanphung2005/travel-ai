@@ -21,6 +21,8 @@ def create_initial_days(start_date: datetime, end_date: datetime) -> tuple[list[
     total_days = (end_date.date() - start_date.date()).days + 1
     if total_days <= 0:
         raise ValueError("Journey must span at least 1 day")
+    if total_days > 4:
+        raise ValueError("Journey must not exceed 4 days for MVP")
 
     days = []
     for index in range(total_days):
