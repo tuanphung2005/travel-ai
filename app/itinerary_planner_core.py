@@ -59,10 +59,22 @@ class ItineraryPlanner:
         self.planning_notes: list[str] = []
         self.candidate_pool_size = 0
         self.generation_time_ms = 0
+        self.reason_codes: list[str] = []
 
         if self.mode == "solo":
             selected_mood = self.mood or "NATURE_EXPLORE"
             self.mood_distribution = {selected_mood: 1.0}
+
+        if self.daily_budget_vnd <= 0 and self.total_budget_vnd > 0 and self.num_days > 0:
+            self.daily_budget_vnd = max(1, self.total_budget_vnd // self.num_days)
+
+        if self.start_location is None and self.places:
+            centroid_lat = sum(place.latitude for place in self.places) / len(self.places)
+            centroid_lon = sum(place.longitude for place in self.places) / len(self.places)
+            self.start_location = {
+                "latitude": round(centroid_lat, 6),
+                "longitude": round(centroid_lon, 6),
+            }
 
     def _matches_category_filters(self, place: PlaceData) -> bool:
         normalized = normalize_category(place.category, place.tags)
@@ -73,10 +85,13 @@ class ItineraryPlanner:
     def _build_candidates(self) -> list[tuple[PlaceData, float, dict[str, float]]]:
         filtered_places = [place for place in self.places if self._matches_category_filters(place)]
 
-        within_budget = [
-            place for place in filtered_places
-            if place.estimated_cost_vnd <= self.daily_budget_vnd
-        ]
+        if self.daily_budget_vnd > 0:
+            within_budget = [
+                place for place in filtered_places
+                if place.estimated_cost_vnd <= self.daily_budget_vnd
+            ]
+        else:
+            within_budget = filtered_places
 
         if "RESET_HEALING" in self.mood_distribution:
             healing_strict = [place for place in within_budget if place.healing_score >= 4]
@@ -87,6 +102,7 @@ class ItineraryPlanner:
                 self.planning_notes.append(
                     "RESET_HEALING fallback: expanded healing_score threshold to >=3 due to limited pool."
                 )
+                self.reason_codes.append("not_enough_healing_gte4")
 
         scored: list[tuple[PlaceData, float, dict[str, float]]] = []
         for place in within_budget:
@@ -111,6 +127,7 @@ class ItineraryPlanner:
         self,
         candidates: list[tuple[PlaceData, float, dict[str, float]]],
         used_place_ids: set[str],
+        day_budget_limit: int,
     ) -> list[tuple[PlaceData, float, dict[str, float]]]:
         available_minutes = int(self.hours_per_day * 60)
         selected: list[tuple[PlaceData, float, dict[str, float]]] = []
@@ -133,11 +150,33 @@ class ItineraryPlanner:
             place = pick[0]
             projected_spent = spent + place.estimated_cost_vnd
             projected_minutes = consumed_minutes + calculate_stop_duration(place, self.travel_style)
-            if projected_spent <= self.daily_budget_vnd and projected_minutes <= available_minutes:
+            if projected_spent <= day_budget_limit and projected_minutes <= available_minutes:
                 selected.append(pick)
                 category_counts[required_category] = category_counts.get(required_category, 0) + 1
                 spent = projected_spent
                 consumed_minutes = projected_minutes
+
+        if "CHILL_CAFE" in self.mood_distribution:
+            cafe_pick = None
+            for entry in unused:
+                category = normalize_category(entry[0].category, entry[0].tags)
+                if category == "CAFE" and entry[0].id not in {p[0].id for p in selected}:
+                    cafe_pick = entry
+                    break
+
+            if cafe_pick:
+                candidate_place = cafe_pick[0]
+                projected_spent = spent + candidate_place.estimated_cost_vnd
+                projected_minutes = consumed_minutes + calculate_stop_duration(candidate_place, self.travel_style)
+                if projected_spent <= day_budget_limit and projected_minutes <= available_minutes:
+                    selected.append(cafe_pick)
+                    category_counts["CAFE"] = category_counts.get("CAFE", 0) + 1
+                    spent = projected_spent
+                    consumed_minutes = projected_minutes
+                else:
+                    self.reason_codes.append("chill_cafe_not_fit_budget_or_time")
+            else:
+                self.reason_codes.append("no_cafe_candidate_available")
 
         ranked = sorted(
             unused,
@@ -161,7 +200,7 @@ class ItineraryPlanner:
             projected_spent = spent + place.estimated_cost_vnd
             projected_minutes = consumed_minutes + duration + self.config["buffer_time_minutes"]
 
-            if projected_spent > self.daily_budget_vnd:
+            if projected_spent > day_budget_limit:
                 continue
             if projected_minutes > available_minutes:
                 continue
@@ -196,7 +235,17 @@ class ItineraryPlanner:
             day_number = day_idx + 1
             day_date = self.start_date + timedelta(days=day_idx)
 
-            selected = self._pick_places_for_day(candidates, used_place_ids)
+            if self.total_budget_vnd > 0:
+                total_remaining = max(0, self.total_budget_vnd - total_spent)
+                day_budget_limit = min(self.daily_budget_vnd, total_remaining) if self.daily_budget_vnd > 0 else total_remaining
+            else:
+                day_budget_limit = self.daily_budget_vnd
+
+            if day_budget_limit <= 0 and self.total_budget_vnd > 0:
+                self.reason_codes.append("total_budget_exhausted")
+                day_budget_limit = 0
+
+            selected = self._pick_places_for_day(candidates, used_place_ids, day_budget_limit)
             selected_places = [entry[0] for entry in selected]
             score_by_id = {entry[0].id: entry[1] for entry in selected}
             breakdown_by_id = {entry[0].id: entry[2] for entry in selected}
@@ -263,7 +312,8 @@ class ItineraryPlanner:
 
             total_distance = route_distance_km(optimized_places, self.distance_matrix)
             total_spent += total_estimated_cost_vnd
-            remaining_today = max(0, self.daily_budget_vnd - total_estimated_cost_vnd)
+            effective_day_budget = day_budget_limit if day_budget_limit > 0 else self.daily_budget_vnd
+            remaining_today = max(0, effective_day_budget - total_estimated_cost_vnd)
             day_explanations.append(
                 f"Spent {total_estimated_cost_vnd:,} VND; remaining {remaining_today:,} VND."
             )
@@ -274,6 +324,8 @@ class ItineraryPlanner:
                 day_explanations.append(
                     f"RESET_HEALING quality: {round(healing_ratio * 100)}% stops with healing_score >= 4."
                 )
+                if healing_ratio < 0.6:
+                    self.reason_codes.append("reset_healing_ratio_below_60")
 
             if stops:
                 summary = (
@@ -310,6 +362,9 @@ class ItineraryPlanner:
 
         self.generation_time_ms = int((time.perf_counter() - started_at) * 1000)
         self.planning_notes.append(f"generation_time_ms={self.generation_time_ms}")
+        if self.reason_codes:
+            unique_codes = sorted(set(self.reason_codes))
+            self.planning_notes.append(f"reason_codes={unique_codes}")
 
         return day_plans
 

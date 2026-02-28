@@ -71,9 +71,11 @@ def get_debug_ui_html() -> str:
         <option value="createRelated">Create Journey (Related)</option>
         <option value="aiplan">AI Plan</option>
         <option value="aiexplain">AI Explain</option>
+        <option value="improveRoute">Improve Route Order</option>
       </select></div>
       <div><label>Journey ID</label><div style="display:flex;gap:6px"><input id="journeyId" placeholder="Auto-filled" /><button class="btn-sm" id="fetchJourneyBtn">&circlearrowright;</button></div></div>
       <div><label>Seed Place ID</label><div style="display:flex;gap:6px"><input id="seedPlaceId" placeholder="Optional" /><button class="btn-sm" id="fetchPlaceBtn">&circlearrowright;</button></div></div>
+      <div style="max-width:140px"><label>Day Number</label><input id="dayNumber" type="number" min="1" value="1" /></div>
     </div>
     <div class="row">
       <div style="max-width:90px"><label>Method</label><input id="method" /></div>
@@ -120,15 +122,50 @@ def get_debug_ui_html() -> str:
     function applyPreset() {
       const id = $('journeyId').value.trim();
       const seed = $('seedPlaceId').value.trim();
+      const dayNumber = Math.max(1, Number($('dayNumber').value || 1));
       const p = $('preset').value;
+
+      const defaultAiPlanBody = {
+        total_budget_vnd: 3000000,
+        daily_budget_vnd: 1000000,
+        mode: 'solo',
+        mood: 'NATURE_EXPLORE',
+        mood_distribution: null,
+        start_location: null,
+        max_places_per_day: 5,
+        must_include_categories: [],
+        exclude_categories: [],
+        hours_per_day: 8,
+        travel_style: 'balanced',
+        place_ids: null,
+      };
+
+      const defaultCreateRelatedBody = {
+        name: 'Auto Journey',
+        owner_id: 'debug-user',
+        start_date: '2026-03-01T00:00:00Z',
+        end_date: '2026-03-03T00:00:00Z',
+        seed_place_id: seed || null,
+        max_places: 10,
+        hours_per_day: 8,
+        travel_style: 'balanced',
+        total_budget_vnd: 3000000,
+        daily_budget_vnd: 1000000,
+        mode: 'solo',
+        mood: 'NATURE_EXPLORE',
+        auto_plan: true,
+        members: [],
+      };
+
       const presets = {
         health:        ['GET', '/health', ''],
         places:        ['GET', '/api/v1/places?limit=5', ''],
         journeys:      ['GET', '/api/v1/journeys?limit=10', ''],
         journey:       ['GET', `/api/v1/journeys/${id||'<id>'}`, ''],
-        aiplan:        ['POST', `/api/v1/journeys/${id||'<id>'}/ai-plan`, JSON.stringify({hours_per_day:8,travel_style:'balanced'},null,2)],
+        aiplan:        ['POST', `/api/v1/journeys/${id||'<id>'}/ai-plan`, JSON.stringify(defaultAiPlanBody, null, 2)],
         aiexplain:     ['GET', `/api/v1/journeys/${id||'<id>'}/ai-explain`, ''],
-        createRelated: ['POST', '/api/v1/journeys/auto-create-related', JSON.stringify({name:'Auto Journey',owner_id:'debug-user',start_date:'2026-03-01T00:00:00Z',end_date:'2026-03-03T00:00:00Z',seed_place_id:seed||null,max_places:10,hours_per_day:8,travel_style:'balanced',auto_plan:true,members:[]},null,2)],
+        createRelated: ['POST', '/api/v1/journeys/auto-create-related', JSON.stringify(defaultCreateRelatedBody, null, 2)],
+        improveRoute:  ['POST', `/api/v1/journeys/${id||'<id>'}/days/${dayNumber}/improve-route-order`, ''],
       };
       const [m, path, body] = presets[p] || presets.health;
       $('method').value = m; $('path').value = path; $('body').value = body;
@@ -190,6 +227,7 @@ def get_debug_ui_html() -> str:
     $('preset').addEventListener('change', applyPreset);
     $('journeyId').addEventListener('change', applyPreset);
     $('seedPlaceId').addEventListener('change', applyPreset);
+    $('dayNumber').addEventListener('change', applyPreset);
 
     applyPreset();
     fetchLatest('/api/v1/journeys?limit=1','journeys','journeyId');
