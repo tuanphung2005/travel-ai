@@ -687,9 +687,12 @@ async def improve_route_order_only(journey_id: str, day_number: int):
             detail="Failed to reorder stops"
         )
 
+    is_improved = after < before
+    message = f"Improved route order for day {day_number}" if is_improved else f"Route for day {day_number} is already optimally ordered"
+
     return {
-        "message": f"Improved route order for day {day_number}",
+        "message": message,
         "distance_before_km": before,
         "distance_after_km": after,
-        "optimized": after <= before,
+        "optimized": is_improved,
     }
