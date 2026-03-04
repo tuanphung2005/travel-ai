@@ -102,7 +102,7 @@ class AIPlanRequest(BaseModel):
         place_ids: Optional list of specific place IDs to include.
                    If not provided, uses all places in the journey.
     """
-    total_days: Optional[int] = Field(default=None, ge=1, le=4)
+    total_days: Optional[int] = Field(default=None, ge=1)
     total_budget_vnd: int = Field(ge=0, description="Total trip budget in VND")
     daily_budget_vnd: int = Field(ge=0, description="Daily budget cap in VND")
     mode: Literal["solo", "group"] = Field(default="solo")
@@ -179,6 +179,19 @@ class AIDayPlan(BaseModel):
     summary: str
 
 
+class AICandidatePlace(BaseModel):
+    """A place evaluated by the AI for inclusion."""
+    place_id: str
+    place_name: str
+    category: str
+    rating: float
+    estimated_cost_vnd: int
+    final_score: float
+    mood_score_breakdown: dict[Mood, float] = Field(default_factory=dict)
+    reasoning: Optional[str] = None
+    selected: bool = False
+
+
 class AIPlanResponse(BaseModel):
     """Response from AI planning endpoint."""
     journey_id: str
@@ -193,6 +206,7 @@ class AIPlanResponse(BaseModel):
     candidate_pool_size: int
     generation_time_ms: int
     days: list[AIDayPlan]
+    candidate_pool: list[AICandidatePlace] = []
     planning_notes: list[str]
     algorithm_version: str = "1.0.0"
 

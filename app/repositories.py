@@ -255,6 +255,22 @@ class JourneyRepository:
         except Exception:
             return None
     
+    async def delete_journey(self, journey_id: str) -> bool:
+        """
+        Delete a journey document by ID.
+
+        Args:
+            journey_id: The journey's ObjectId as string
+
+        Returns:
+            True if deleted successfully
+        """
+        try:
+            result = await self.collection.delete_one({"_id": ObjectId(journey_id)})
+            return result.deleted_count > 0
+        except Exception:
+            return False
+    
     async def update_days(
         self, 
         journey_id: str, 

@@ -366,6 +366,20 @@ class ItineraryPlanner:
             unique_codes = sorted(set(self.reason_codes))
             self.planning_notes.append(f"reason_codes={unique_codes}")
 
+        self.candidate_places_details = []
+        for entry in candidates:
+            place = entry[0]
+            self.candidate_places_details.append({
+                "place_id": place.id,
+                "place_name": place.name,
+                "category": place.category,
+                "rating": place.rating,
+                "estimated_cost_vnd": place.estimated_cost_vnd,
+                "final_score": entry[1],
+                "mood_score_breakdown": entry[2],
+                "selected": place.id in used_place_ids,
+            })
+
         return day_plans
 
     def _create_empty_days(self) -> list[dict]:

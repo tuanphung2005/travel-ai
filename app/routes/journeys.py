@@ -287,10 +287,10 @@ async def generate_ai_plan(
     end_date = parse_iso_datetime(end_date)
 
     total_days = (end_date.date() - start_date.date()).days + 1
-    if total_days < 1 or total_days > 4:
+    if total_days < 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Journey total days must be between 1 and 4"
+            detail="Journey must be at least 1 day"
         )
 
     if request.total_days is not None and request.total_days != total_days:
@@ -322,10 +322,8 @@ async def generate_ai_plan(
     # Step 6: Convert to response format
     response_days = map_day_plans_to_response(day_plans)
     
-    # Step 7: Optionally update the journey in database
-    db_days = map_day_plans_to_db(day_plans)
-    
-    await journey_repo.update_days(journey_id, db_days)
+    # Step 7: Do not update the database, just return the plan.
+    # User requested that AI Planner remain read-only.
 
     planning_event = {
         "tripId": journey_id,
@@ -365,6 +363,7 @@ async def generate_ai_plan(
         candidate_pool_size=planner.candidate_pool_size,
         generation_time_ms=planner.generation_time_ms,
         days=response_days,
+        candidate_pool=getattr(planner, "candidate_places_details", []),
         planning_notes=planner.planning_notes,
         algorithm_version="2.0.0",
     )
@@ -488,6 +487,33 @@ async def get_journey(journey_id: str):
     journey["_id"] = str(journey["_id"])
     
     return journey
+
+
+@router.delete(
+    "/{journey_id}",
+    summary="Delete a journey",
+    description="Delete a journey completely from the database"
+)
+async def delete_journey(journey_id: str):
+    """
+    Delete a journey by ID.
+    
+    Args:
+        journey_id: The journey's ObjectId
+        
+    Returns:
+        Success message
+    """
+    journey_repo = get_journey_repository()
+    
+    deleted = await journey_repo.delete_journey(journey_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Journey with ID '{journey_id}' not found or could not be deleted"
+        )
+        
+    return {"message": f"Successfully deleted journey {journey_id}"}
 
 
 @router.post(
