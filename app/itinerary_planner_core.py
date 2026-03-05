@@ -80,6 +80,16 @@ class ItineraryPlanner:
         normalized = normalize_category(place.category, place.tags)
         if self.exclude_categories and normalized in self.exclude_categories:
             return False
+
+        name_lower = place.name.lower()
+        excluded_phrases = [
+            "công ty", "cong ty", "tnhh", "travel agency", 
+            "phòng vé", "phong ve", "đại lý", "dai ly", 
+            "nhà xe", "nha xe", "jsc"
+        ]
+        if any(phrase in name_lower for phrase in excluded_phrases):
+            return False
+
         return True
 
     def _build_candidates(self) -> list[tuple[PlaceData, float, dict[str, float]]]:
