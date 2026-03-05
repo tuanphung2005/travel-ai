@@ -70,7 +70,7 @@ function AIPlannerTab() {
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <Btn primary onClick={run} disabled={loading} style={{ flex: 1 }}>
-            {loading ? 'Generating...' : '🤖 Generate AI Plan (Read-Only)'}
+            {loading ? 'Generating...' : '🤖 Generate AI Plan'}
           </Btn>
           {latestMs !== null && <Badge color="muted">{latestMs}ms</Badge>}
         </div>
