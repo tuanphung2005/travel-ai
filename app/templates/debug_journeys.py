@@ -49,13 +49,13 @@ function JourneysTab() {
   };
 
   if (loading) return <Loading text="Fetching journeys..." />;
-  if (journeys.length === 0) return <Empty text="No journeys found" icon="🗺️" />;
+  if (journeys.length === 0) return <Empty text="No journeys found" />;
 
   return <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
     {journeys.map(j => <Card key={j._id} style={{ cursor: 'pointer' }}>
       <div onClick={() => expand(j._id)} style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '24px' }}>🗺️</span>
+          <span style={{ fontSize: '24px', fontFamily: 'var(--mono)', color: 'var(--accent)' }}>[J]</span>
           <div>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>{j.name || 'Unnamed'}</div>
             <div style={{ fontSize: '12px', color: 'var(--muted)', display: 'flex', gap: '12px', marginTop: '4px' }}>
@@ -71,7 +71,7 @@ function JourneysTab() {
             padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center',
             opacity: deleting === j._id ? 0.5 : 0.8,
           }} onMouseEnter={e => e.currentTarget.style.background = 'var(--red-bg)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'} title="Delete journey">
-            {deleting === j._id ? '⏳' : '🗑️'}
+            {deleting === j._id ? 'Deleting...' : 'Delete'}
           </button>
           <span style={{ color: 'var(--muted)', transform: expanded === j._id ? 'rotate(180deg)' : 'none', padding: '0 4px' }}>▼</span>
         </div>
@@ -79,21 +79,41 @@ function JourneysTab() {
 
       {expanded === j._id && <div style={{ borderTop: '1px solid var(--border)', padding: '20px' }}>
         {detailLoading ? <Loading text="Loading journey details..." /> :
-         journeyDetail ? <JourneyDayView days={journeyDetail.days || []} /> :
-         <Empty text="Failed to load" icon="❌" />}
+         journeyDetail ? <JourneyDayView journeyId={j._id} days={journeyDetail.days || []} onRefresh={() => expand(j._id)} /> :
+         <Empty text="Failed to load" />}
       </div>}
     </Card>)}
   </div>;
 }
 
-function JourneyDayView({ days }) {
-  if (!days || days.length === 0) return <Empty text="No days planned yet" icon="📅" />;
+function JourneyDayView({ journeyId, days, onRefresh }) {
+  const [optimizing, setOptimizing] = useState(null);
+
+  const optimizeRoute = async (dayNum) => {
+    setOptimizing(dayNum);
+    const res = await api(`/api/v1/journeys/${journeyId}/days/${dayNum}/improve-route-order`, { method: 'POST' });
+    if (res.ok) {
+      if (onRefresh) await onRefresh();
+    } else {
+      alert('Failed to optimize: ' + (typeof res.data === 'object' ? JSON.stringify(res.data) : res.data));
+    }
+    setOptimizing(null);
+  };
+
+  if (!days || days.length === 0) return <Empty text="No days planned yet" />;
   return <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
     {days.map((day, di) => <div key={di}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-        <Badge color="accent">Day {day.day_number}</Badge>
-        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{day.date ? new Date(day.date).toLocaleDateString() : ''}</span>
-        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{(day.stops || []).length} stops</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Badge color="accent">Day {day.day_number}</Badge>
+          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{day.date ? new Date(day.date).toLocaleDateString() : ''}</span>
+          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{(day.stops || []).length} stops</span>
+        </div>
+        {(day.stops || []).length > 1 && (
+          <Btn small onClick={() => optimizeRoute(day.day_number)} disabled={optimizing === day.day_number}>
+            {optimizing === day.day_number ? 'Optimizing...' : 'Optimize Route'}
+          </Btn>
+        )}
       </div>
       {(day.stops || []).length === 0
         ? <div style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: '13px', fontStyle: 'italic' }}>No stops</div>
@@ -120,8 +140,8 @@ function StopCard({ stop, index }) {
         <div style={{ fontSize: '11px', color: 'var(--muted)', display: 'flex', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
           {stop.category && <Badge color="blue">{stop.category}</Badge>}
           <span>{stop.estimated_duration_minutes || 0}min</span>
-          {stop.distance_from_previous_km > 0 && <span>📍 {stop.distance_from_previous_km}km</span>}
-          {stop.travel_time_from_previous_minutes > 0 && <span>🚗 {stop.travel_time_from_previous_minutes}min</span>}
+          {stop.distance_from_previous_km > 0 && <span>Dist: {stop.distance_from_previous_km}km</span>}
+          {stop.travel_time_from_previous_minutes > 0 && <span>Travel: {stop.travel_time_from_previous_minutes}min</span>}
         </div>
       </div>
     </div>

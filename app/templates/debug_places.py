@@ -85,7 +85,7 @@ function PlacesTab() {
               </div>
             </td></tr>}
           </React.Fragment>)}
-          {filtered.length === 0 && <tr><td colSpan={6}><Empty text="No places match your filters" icon="🔍" /></td></tr>}
+          {filtered.length === 0 && <tr><td colSpan={6}><Empty text="No places match your filters" /></td></tr>}
         </tbody>
       </table>
     </div>

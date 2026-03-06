@@ -151,6 +151,18 @@ class CreateJourneyFromRelatedRequest(BaseModel):
         description="If true, runs AI planner and fills journey days immediately"
     )
     members: list[str] = []
+    start_location: Optional[dict[str, float]] = Field(
+        default=None,
+        description="Optional start location with latitude and longitude"
+    )
+    must_include_categories: Optional[list[str]] = Field(
+        default=None,
+        description="Optional list of place categories that must be included"
+    )
+    exclude_categories: Optional[list[str]] = Field(
+        default=None,
+        description="Optional list of place categories to exclude"
+    )
 
 class CreateJourneyFromRelatedResponse(BaseModel):
     """Response for journey creation from related places."""
@@ -161,3 +173,7 @@ class CreateJourneyFromRelatedResponse(BaseModel):
     auto_planned: bool
     total_days: int
     planning_notes: list[str] = []
+    candidate_pool: Optional[list[AICandidatePlace]] = None
+    days: Optional[list[AIDayPlan]] = None
+    candidate_pool_size: Optional[int] = 0
+    generation_time_ms: Optional[int] = 0

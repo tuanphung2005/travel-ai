@@ -144,9 +144,9 @@ function Loading({ text = 'Loading...' }) {
   </div>;
 }
 
-function Empty({ icon = '📭', text = 'No data' }) {
+function Empty({ icon = '', text = 'No data' }) {
   return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '60px 20px', color: 'var(--muted)' }}>
-    <span style={{ fontSize: '36px' }}>{icon}</span><span style={{ fontSize: '14px' }}>{text}</span>
+    {icon && <span style={{ fontSize: '36px' }}>{icon}</span>}<span style={{ fontSize: '14px' }}>{text}</span>
   </div>;
 }
 
@@ -175,11 +175,11 @@ __EXPLORER_TAB__
 /* MAIN APP                 */
 /* ======================== */
 const TABS = [
-  { id: 'places', label: '📍 Places', icon: '📍' },
-  { id: 'journeys', label: '📋 Journeys', icon: '📋' },
-  { id: 'planner', label: '🤖 AI Planner', icon: '🤖' },
-  { id: 'optimizer', label: '🔄 Route Optimizer', icon: '🔄' },
-  { id: 'explorer', label: '⚡ API Explorer', icon: '⚡' },
+  { id: 'places', label: 'Places' },
+  { id: 'journeys', label: 'Journeys' },
+  { id: 'planner', label: 'AI Planner' },
+  { id: 'optimizer', label: 'Route Optimizer' },
+  { id: 'explorer', label: 'API Explorer' },
 ];
 
 function App() {
@@ -195,7 +195,7 @@ function App() {
     }}>
       <h1 style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', gap: '10px',
         background: 'linear-gradient(135deg, #fff 0%, #a1a1aa 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-        <span style={{ WebkitTextFillColor: 'initial' }}>🧭</span> Travel AI Debug
+        Travel AI Debug
       </h1>
       <div style={{ display: 'flex', gap: '4px', background: 'rgba(0,0,0,0.3)', padding: '4px', borderRadius: '10px', border: '1px solid var(--border)' }}>
         {TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{

@@ -1,3 +1,4 @@
+import time
 from fastapi import APIRouter, HTTPException, status
 from datetime import datetime
 
@@ -100,8 +101,13 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
         )
 
     planning_notes: list[str] = []
+    response_days = None
+    candidate_pool = None
+    candidate_pool_size = 0
+    generation_time_ms = 0
 
     if request.auto_plan:
+        start_time = time.time()
         places = to_place_data_list(selected_docs)
 
         planner = ItineraryPlanner(
@@ -115,12 +121,17 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
             mode=request.mode,
             mood=request.mood,
             mood_distribution=None,
-            start_location=None,
+            start_location=request.start_location,
             max_places_per_day=5,
-            must_include_categories=None,
-            exclude_categories=None,
+            must_include_categories=request.must_include_categories,
+            exclude_categories=request.exclude_categories,
         )
         day_plans = planner.plan()
+        generation_time_ms = int((time.time() - start_time) * 1000)
+
+        response_days = map_day_plans_to_response(day_plans)
+        candidate_pool = getattr(planner, "candidate_places_details", [])
+        candidate_pool_size = planner.candidate_pool_size
 
         db_days = map_day_plans_to_db(day_plans)
         await journey_repo.update_days(journey_id, db_days)
@@ -134,6 +145,10 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
         auto_planned=request.auto_plan,
         total_days=total_days,
         planning_notes=planning_notes,
+        candidate_pool=candidate_pool,
+        days=response_days,
+        candidate_pool_size=candidate_pool_size,
+        generation_time_ms=generation_time_ms,
     )
 
 
