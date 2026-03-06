@@ -54,7 +54,7 @@ function RouteOptimizerTab() {
             options={(journey?.days || [{ day_number: 1 }]).map(d => ({ value: String(d.day_number), label: `Day ${d.day_number}` }))}
             style={{ minWidth: '100px' }} />
           <Btn primary onClick={run} disabled={loading}>
-            {loading ? 'Optimizing...' : '🔄 Optimize Route'}
+            {loading ? 'Optimizing...' : 'Optimize Route'}
           </Btn>
           {latestMs !== null && <Badge color="muted">{latestMs}ms</Badge>}
         </div>
@@ -62,13 +62,13 @@ function RouteOptimizerTab() {
     </Card>
 
     {error && <Card style={{ borderColor: 'rgba(239,68,68,0.3)' }}>
-      <div style={{ padding: '16px 20px', color: 'var(--red)', fontSize: '13px', fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap' }}>❌ {error}</div>
+      <div style={{ padding: '16px 20px', color: 'var(--red)', fontSize: '13px', fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap' }}>Error: {error}</div>
     </Card>}
 
     {result && <Card>
       <div style={{ padding: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
-          <span style={{ fontSize: '32px' }}>{result.optimized ? '✅' : '➡️'}</span>
+          <span style={{ fontSize: '32px' }}>{result.optimized ? '[OK]' : '[SKIP]'}</span>
           <div>
             <div style={{ fontWeight: 700, fontSize: '16px' }}>{result.message}</div>
             <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>
@@ -103,7 +103,7 @@ function RouteOptimizerTab() {
       </div>
       <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {(selectedDay.stops || []).sort((a,b) => a.order - b.order).map((s, i) => <StopCard key={i} stop={s} index={i} />)}
-        {(selectedDay.stops || []).length === 0 && <Empty text="No stops on this day" icon="📍" />}
+        {(selectedDay.stops || []).length === 0 && <Empty text="No stops on this day" />}
       </div>
     </Card>}
   </div>;

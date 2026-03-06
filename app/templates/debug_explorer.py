@@ -36,7 +36,7 @@ function ApiExplorerTab() {
             style={{ minWidth: '100px' }} />
           <Input label="Path" value={path} onChange={setPath} placeholder="/api/v1/..." mono style={{ flex: 1 }} />
           <Btn primary onClick={send} disabled={loading}>
-            {loading ? 'Sending...' : '⚡ Send'}
+            {loading ? 'Sending...' : 'Send'}
           </Btn>
           {latestMs !== null && <Badge color="muted">{latestMs}ms</Badge>}
         </div>
