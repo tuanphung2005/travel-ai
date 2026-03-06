@@ -16,9 +16,16 @@ function RouteOptimizerTab() {
   const [latestMs, setLatestMs] = useState(null);
 
   useEffect(() => {
-    api('/api/v1/journeys?limit=1').then(r => {
-      if (r.ok && r.data.journeys?.[0]) setJourneyId(r.data.journeys[0]._id);
-    });
+    if (window.__targetOptimizeJourneyId) {
+       setJourneyId(window.__targetOptimizeJourneyId);
+       setDayNumber(window.__targetOptimizeDayNumber || '1');
+       window.__targetOptimizeJourneyId = null;
+       window.__targetOptimizeDayNumber = null;
+    } else {
+       api('/api/v1/journeys?limit=1').then(r => {
+         if (r.ok && r.data.journeys?.[0]) setJourneyId(r.data.journeys[0]._id);
+       });
+    }
   }, []);
 
   const fetchJourney = async () => {
