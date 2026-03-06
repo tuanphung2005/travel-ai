@@ -71,13 +71,16 @@ function PlacesTab() {
               <div style={{ padding: '16px 20px', background: 'rgba(0,0,0,0.15)', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px', fontSize: '12px' }}>
                   <div><span style={{ color: 'var(--muted)' }}>Full ID: </span><Copyable text={p._id} /></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Google ID: </span>{p.google_id ? <Copyable text={p.google_id} /> : '—'}</div>
                   <div><span style={{ color: 'var(--muted)' }}>Address: </span>{p.address || '—'}</div>
                   <div><span style={{ color: 'var(--muted)' }}>Coords: </span><span style={{ fontFamily: 'var(--mono)' }}>{p.location?.coordinates?.[1]?.toFixed(5)}, {p.location?.coordinates?.[0]?.toFixed(5)}</span></div>
                   <div><span style={{ color: 'var(--muted)' }}>Reviews: </span>{p.reviewCount || 0}</div>
+                  <div><span style={{ color: 'var(--muted)' }}>Price Level: </span>{p.priceLevel ?? '—'}</div>
                   <div><span style={{ color: 'var(--muted)' }}>Healing: </span>{p.healing_score ?? '—'}/5</div>
                   <div><span style={{ color: 'var(--muted)' }}>Crowd: </span>{p.crowd_level ?? '—'}/5</div>
-                  <div><span style={{ color: 'var(--muted)' }}>Tags: </span>{(p.tags || []).join(', ') || '—'}</div>
+                  <div style={{ gridColumn: '1 / -1' }}><span style={{ color: 'var(--muted)' }}>Tags: </span>{(p.tags || []).join(', ') || '—'}</div>
                   {p.description && <div style={{ gridColumn: '1 / -1' }}><span style={{ color: 'var(--muted)' }}>Desc: </span>{p.description}</div>}
+                  {p.image_url && <div style={{ gridColumn: '1 / -1' }}><span style={{ color: 'var(--muted)' }}>Image: </span><a href={p.image_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent2)', textDecoration: 'none' }}>view image ↗</a></div>}
                 </div>
               </div>
             </td></tr>}

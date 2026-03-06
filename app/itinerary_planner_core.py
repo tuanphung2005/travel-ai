@@ -119,15 +119,15 @@ class ItineraryPlanner:
             within_budget = filtered_places
 
         if "RESET_HEALING" in self.mood_distribution:
-            healing_strict = [place for place in within_budget if place.healing_score >= 4]
+            healing_strict = [place for place in within_budget if place.healing_score >= 4 and place.crowd_level <= 3]
             if len(healing_strict) >= min(6, len(within_budget)):
                 within_budget = healing_strict
             else:
-                within_budget = [place for place in within_budget if place.healing_score >= 3]
+                within_budget = [place for place in within_budget if place.healing_score >= 3 and place.crowd_level <= 4]
                 self.planning_notes.append(
-                    "RESET_HEALING fallback: expanded healing_score threshold to >=3 due to limited pool."
+                    "RESET_HEALING fallback: expanded healing_score threshold to >=3 and crowd_level to <=4 due to limited pool."
                 )
-                self.reason_codes.append("not_enough_healing_gte4")
+                self.reason_codes.append("not_enough_healing_gte4_low_crowd")
 
         scored: list[tuple[PlaceData, float, dict[str, float]]] = []
         for place in within_budget:

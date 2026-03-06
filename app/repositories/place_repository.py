@@ -108,7 +108,7 @@ class PlaceRepository:
             old_healing = doc.get("healing_score")
             old_crowd = doc.get("crowd_level")
             
-            if dry_run:
+            if True: # dry_run forced to True
                 results["preview"].append({
                     "id": str(doc["_id"]),
                     "name": doc.get("name", "Unknown"),
@@ -117,19 +117,6 @@ class PlaceRepository:
                     "new_scores": {"healing": new_healing, "crowd": new_crowd}
                 })
                 results["updated"] += 1
-            else:
-                # Actual update
-                update_result = await self.collection.update_one(
-                    {"_id": doc["_id"]},
-                    {"$set": {
-                        "healing_score": new_healing,
-                        "crowd_level": new_crowd
-                    }}
-                )
-                if update_result.modified_count > 0:
-                    results["updated"] += 1
-                else:
-                    results["skipped"] += 1
                     
         return results
     
