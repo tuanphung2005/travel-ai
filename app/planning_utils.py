@@ -340,6 +340,24 @@ def calculate_stop_duration(place: PlaceData, style: str) -> int:
     return int(max(30, duration))
 
 
+def calculate_hotel_night_cost(hotel: PlaceData, num_nights: int) -> int:
+    """Calculate total accommodation cost based on Google price level."""
+    if num_nights <= 0:
+        return 0
+        
+    night_rates = {
+        0: 400_000,    # Very cheap / Budget
+        1: 600_000,    # Inexpensive
+        2: 1_200_000,  # Moderate
+        3: 2_500_000,  # Expensive
+        4: 5_000_000,  # Very expensive
+    }
+    
+    # Default to Moderate if out of bounds or missing
+    rate = night_rates.get(hotel.price_level, 1_200_000)
+    return rate * num_nights
+
+
 def generate_stop_reason(
     place: PlaceData,
     style: str,

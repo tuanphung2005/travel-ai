@@ -64,6 +64,7 @@ class AIStopSuggestion(BaseModel):
     estimated_cost_vnd: int = 0
     final_score: float = 0.0
     mood_score_breakdown: dict[Mood, float] = Field(default_factory=dict)
+    is_hotel_anchor: bool = False
 
 class AIDayPlan(BaseModel):
     """AI-generated day plan with metadata."""
@@ -105,6 +106,9 @@ class AIPlanResponse(BaseModel):
     generated_at: datetime
     candidate_pool_size: int
     generation_time_ms: int
+    hotel_name: Optional[str] = None
+    accommodation_cost_vnd: int = 0
+    num_nights: int = 0
     days: list[AIDayPlan]
     candidate_pool: list[AICandidatePlace] = []
     planning_notes: list[str]
