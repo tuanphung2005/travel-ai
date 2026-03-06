@@ -87,17 +87,10 @@ function JourneysTab() {
 }
 
 function JourneyDayView({ journeyId, days, onRefresh }) {
-  const [optimizing, setOptimizing] = useState(null);
-
-  const optimizeRoute = async (dayNum) => {
-    setOptimizing(dayNum);
-    const res = await api(`/api/v1/journeys/${journeyId}/days/${dayNum}/improve-route-order`, { method: 'POST' });
-    if (res.ok) {
-      if (onRefresh) await onRefresh();
-    } else {
-      alert('Failed to optimize: ' + (typeof res.data === 'object' ? JSON.stringify(res.data) : res.data));
-    }
-    setOptimizing(null);
+  const goToOptimizer = (dayNum) => {
+    window.__targetOptimizeJourneyId = journeyId;
+    window.__targetOptimizeDayNumber = String(dayNum);
+    if (window.navigateTab) window.navigateTab('optimizer');
   };
 
   if (!days || days.length === 0) return <Empty text="No days planned yet" />;
@@ -110,8 +103,8 @@ function JourneyDayView({ journeyId, days, onRefresh }) {
           <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{(day.stops || []).length} stops</span>
         </div>
         {(day.stops || []).length > 1 && (
-          <Btn small onClick={() => optimizeRoute(day.day_number)} disabled={optimizing === day.day_number}>
-            {optimizing === day.day_number ? 'Optimizing...' : 'Optimize Route'}
+          <Btn small onClick={() => goToOptimizer(day.day_number)}>
+            Optimize Route
           </Btn>
         )}
       </div>

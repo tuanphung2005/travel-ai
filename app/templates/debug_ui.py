@@ -8,6 +8,7 @@ from app.templates.debug_journeys import get_journeys_tab_js
 from app.templates.debug_planner import get_planner_tab_js
 from app.templates.debug_optimizer import get_optimizer_tab_js
 from app.templates.debug_explorer import get_explorer_tab_js
+from app.templates.debug_explainer import get_explainer_tab_js
 
 
 _HTML_SHELL = """\
@@ -101,7 +102,7 @@ function Btn({ children, primary, small, onClick, disabled, style }) {
     color: primary ? '#fff' : 'var(--text2)', fontSize: small ? '12px' : '13px',
     fontWeight: 600, fontFamily: 'var(--sans)', cursor: disabled ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: '8px',
-    boxShadow: primary ? '0 4px 14px var(--accent-glow)' : 'none', ...style,
+    ...style,
   }}>{children}</button>;
 }
 
@@ -170,6 +171,7 @@ __JOURNEYS_TAB__
 __PLANNER_TAB__
 __OPTIMIZER_TAB__
 __EXPLORER_TAB__
+__EXPLAINER_TAB__
 
 /* ======================== */
 /* MAIN APP                 */
@@ -179,11 +181,13 @@ const TABS = [
   { id: 'journeys', label: 'Journeys' },
   { id: 'planner', label: 'AI Planner' },
   { id: 'optimizer', label: 'Route Optimizer' },
+  { id: 'explainer', label: 'AI Explainer' },
   { id: 'explorer', label: 'API Explorer' },
 ];
 
 function App() {
   const [tab, setTab] = useState('places');
+  useEffect(() => { window.navigateTab = setTab; }, []);
 
   return <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
     {/* Header */}
@@ -214,6 +218,7 @@ function App() {
       {tab === 'journeys' && <JourneysTab />}
       {tab === 'planner' && <AIPlannerTab />}
       {tab === 'optimizer' && <RouteOptimizerTab />}
+      {tab === 'explainer' && <ExplainerTab />}
       {tab === 'explorer' && <ApiExplorerTab />}
     </main>
   </div>;
@@ -233,4 +238,5 @@ def get_debug_ui_html() -> str:
     html = html.replace("__PLANNER_TAB__", get_planner_tab_js())
     html = html.replace("__OPTIMIZER_TAB__", get_optimizer_tab_js())
     html = html.replace("__EXPLORER_TAB__", get_explorer_tab_js())
+    html = html.replace("__EXPLAINER_TAB__", get_explainer_tab_js())
     return html
