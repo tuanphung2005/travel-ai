@@ -17,6 +17,7 @@ class PlaceData:
     avg_visit_duration_min: int
     healing_score: int
     crowd_level: int
+    price_level: int = 0
     image_url: str | None = None
 
 

@@ -1,4 +1,5 @@
 """Core itinerary planner implementation."""
+import math
 import time
 from datetime import datetime, timedelta
 from typing import Optional
@@ -15,6 +16,8 @@ from app.planning_utils import (
     calculate_stop_duration,
     generate_stop_reason,
     normalize_category,
+    calculate_hotel_night_cost,
+    calculate_place_score,
 )
 
 
@@ -61,6 +64,14 @@ class ItineraryPlanner:
         self.generation_time_ms = 0
         self.reason_codes: list[str] = []
 
+        self.primary_hotel = None
+        self.accommodation_cost_vnd = 0
+        self.hotel_name = None
+        self.num_nights = 0
+        hotel_places = [p for p in self.places if normalize_category(p.category, p.tags) == "HOTEL"]
+        if hotel_places:
+            self.primary_hotel = max(hotel_places, key=lambda p: p.rating)
+
         if self.mode == "solo":
             selected_mood = self.mood or "NATURE_EXPLORE"
             self.mood_distribution = {selected_mood: 1.0}
@@ -94,6 +105,10 @@ class ItineraryPlanner:
 
     def _build_candidates(self) -> list[tuple[PlaceData, float, dict[str, float]]]:
         filtered_places = [place for place in self.places if self._matches_category_filters(place)]
+        
+        # Exclude hotels from normal stops if they are handled as an anchor
+        if self.primary_hotel:
+            filtered_places = [p for p in filtered_places if normalize_category(p.category, p.tags) != "HOTEL"]
 
         if self.daily_budget_vnd > 0:
             within_budget = [
@@ -116,14 +131,18 @@ class ItineraryPlanner:
 
         scored: list[tuple[PlaceData, float, dict[str, float]]] = []
         for place in within_budget:
-            final_score, breakdown = blended_mood_score(place, self.mood_distribution)
+            mood_score, breakdown = blended_mood_score(place, self.mood_distribution)
+            style_score = calculate_place_score(place, self.travel_style)
+            
+            # Combine them: 60% mood, 40% style
+            final_score = round(mood_score * 0.6 + style_score * 0.4, 2)
             scored.append((place, final_score, breakdown))
 
         scored.sort(
             key=lambda entry: (
-                entry[1],
-                entry[0].rating,
-                entry[0].review_count,
+                entry[1],                                           # final_score
+                min(20, math.log10(max(1, entry[0].review_count))), # logarithmic review score instead of raw!
+                entry[0].rating,                                    # rating
             ),
             reverse=True,
         )
@@ -264,7 +283,7 @@ class ItineraryPlanner:
                 optimized_places = optimize_route_order(
                     selected_places,
                     self.distance_matrix,
-                    start_location=self.start_location,
+                    start_location={"latitude": self.primary_hotel.latitude, "longitude": self.primary_hotel.longitude} if self.primary_hotel else self.start_location,
                     two_opt_enabled=True,
                 )
             else:
@@ -277,7 +296,13 @@ class ItineraryPlanner:
             previous_place: Optional[PlaceData] = None
             day_explanations: list[str] = []
 
-            for order, place in enumerate(optimized_places, 1):
+            places_to_visit = list(optimized_places)
+            if self.primary_hotel:
+                places_to_visit.insert(0, self.primary_hotel)
+                if len(places_to_visit) > 1:
+                    places_to_visit.append(self.primary_hotel)
+
+            for order, place in enumerate(places_to_visit, 1):
                 if previous_place:
                     distance = self.distance_matrix[previous_place.id][place.id]
                     travel_time = estimate_travel_time(distance)
@@ -285,17 +310,28 @@ class ItineraryPlanner:
                     distance = 0.0
                     travel_time = 0
 
-                duration = calculate_stop_duration(place, self.travel_style)
+                is_hotel_anchor = self.primary_hotel and place.id == self.primary_hotel.id and (order == 1 or order == len(places_to_visit))
 
-                reason = generate_stop_reason(
-                    place,
-                    self.travel_style,
-                    day_number,
-                    order,
-                    distance,
-                    mood_label=", ".join(self.mood_distribution.keys()),
-                    final_score=score_by_id.get(place.id, 0.0),
-                )
+                if is_hotel_anchor:
+                    if order == 1:
+                        duration = 30
+                        reason = "Good morning! Start your day from the hotel."
+                    else:
+                        duration = 0
+                        reason = "Time to rest. Return to the hotel."
+                    cost = 0
+                else:
+                    duration = calculate_stop_duration(place, self.travel_style)
+                    reason = generate_stop_reason(
+                        place,
+                        self.travel_style,
+                        day_number,
+                        order,
+                        distance,
+                        mood_label=", ".join(self.mood_distribution.keys()),
+                        final_score=score_by_id.get(place.id, 0.0),
+                    )
+                    cost = place.estimated_cost_vnd
 
                 stops.append({
                     "place_id": place.id,
@@ -309,18 +345,19 @@ class ItineraryPlanner:
                     "longitude": place.longitude,
                     "category": place.category,
                     "rating": place.rating,
-                    "estimated_cost_vnd": place.estimated_cost_vnd,
+                    "estimated_cost_vnd": cost,
                     "final_score": score_by_id.get(place.id, 0.0),
                     "mood_score_breakdown": breakdown_by_id.get(place.id, {}),
+                    "is_hotel_anchor": bool(is_hotel_anchor),
                 })
 
                 total_duration += duration
                 total_travel_time += travel_time
-                total_estimated_cost_vnd += place.estimated_cost_vnd
+                total_estimated_cost_vnd += cost
                 previous_place = place
                 used_place_ids.add(place.id)
 
-            total_distance = route_distance_km(optimized_places, self.distance_matrix)
+            total_distance = route_distance_km(places_to_visit, self.distance_matrix)
             total_spent += total_estimated_cost_vnd
             effective_day_budget = day_budget_limit if day_budget_limit > 0 else self.daily_budget_vnd
             remaining_today = max(0, effective_day_budget - total_estimated_cost_vnd)
@@ -365,6 +402,23 @@ class ItineraryPlanner:
         self.planning_notes.append(
             f"Planning complete. Total stops: {sum(len(d['stops']) for d in day_plans)}"
         )
+        
+        num_nights = max(0, self.num_days - 1)
+        accommodation_cost_vnd = 0
+        hotel_name = None
+        
+        self.num_nights = num_nights
+        
+        if self.primary_hotel:
+            hotel_name = self.primary_hotel.name
+            accommodation_cost_vnd = calculate_hotel_night_cost(self.primary_hotel, num_nights)
+            
+            self.hotel_name = hotel_name
+            self.accommodation_cost_vnd = accommodation_cost_vnd
+            
+            self.planning_notes.append(f"Accommodation cost: {accommodation_cost_vnd:,} VND ({num_nights} nights at {hotel_name})")
+            total_spent += accommodation_cost_vnd
+            
         if self.total_budget_vnd > 0:
             self.planning_notes.append(
                 f"Total spent estimate: {total_spent:,} VND. Savings vs total budget: {max(0, self.total_budget_vnd - total_spent):,} VND."

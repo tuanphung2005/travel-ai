@@ -163,6 +163,7 @@ class PlaceRepository:
             avg_visit_duration_min=int(doc.get("avg_visit_duration_min", 75) or 75),
             healing_score=int(doc.get("healing_score", inferred_healing) or inferred_healing),
             crowd_level=int(doc.get("crowd_level", inferred_crowd) or inferred_crowd),
+            price_level=price_level,
             image_url=doc.get("image_url"),
         )
 
