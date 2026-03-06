@@ -4,6 +4,7 @@ from typing import Optional
 
 from app.database import get_database
 from app.ai_planner import PlaceData
+from app.services.place_enrichment import estimate_healing_score, estimate_crowd_level
 
 
 class PlaceRepository:
@@ -72,6 +73,65 @@ class PlaceRepository:
             "status": "APPROVED"
         })
         return await cursor.to_list(length=None)
+    
+    async def enrich_missing_scores(self, dry_run: bool = False) -> dict:
+        """Finds records missing healing/crowd scores, estimates them, and updates DB."""
+        # Find places lacking explicit values for these two
+        # we check both $exists and $eq null in case they're set to null
+        query = {
+            "$or": [
+                {"crowd_level": {"$exists": False}},
+                {"crowd_level": None},
+                {"healing_score": {"$exists": False}},
+                {"healing_score": None}
+            ]
+        }
+        
+        cursor = self.collection.find(query)
+        places = await cursor.to_list(length=None)
+        
+        results = {
+            "total_found": len(places),
+            "updated": 0,
+            "skipped": 0,
+            "preview": []
+        }
+        
+        if not places:
+            return results
+            
+        for doc in places:
+            # Recompute existing or entirely new
+            new_healing = estimate_healing_score(doc)
+            new_crowd = estimate_crowd_level(doc)
+            
+            old_healing = doc.get("healing_score")
+            old_crowd = doc.get("crowd_level")
+            
+            if dry_run:
+                results["preview"].append({
+                    "id": str(doc["_id"]),
+                    "name": doc.get("name", "Unknown"),
+                    "category": doc.get("category", ""),
+                    "old_scores": {"healing": old_healing, "crowd": old_crowd},
+                    "new_scores": {"healing": new_healing, "crowd": new_crowd}
+                })
+                results["updated"] += 1
+            else:
+                # Actual update
+                update_result = await self.collection.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {
+                        "healing_score": new_healing,
+                        "crowd_level": new_crowd
+                    }}
+                )
+                if update_result.modified_count > 0:
+                    results["updated"] += 1
+                else:
+                    results["skipped"] += 1
+                    
+        return results
     
     @staticmethod
     def to_place_data(doc: dict) -> PlaceData:

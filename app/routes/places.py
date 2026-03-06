@@ -109,3 +109,32 @@ async def find_nearby_places(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Geospatial query failed. Ensure 2dsphere index exists on location field. Error: {str(e)}"
         )
+
+
+@router.post(
+    "/enrich-scores",
+    summary="Estimate and enrich missing healing/crowd scores",
+    description="Uses rule-based heuristics to infer healing_score and crowd_level for places that lack them."
+)
+async def enrich_place_scores(
+    dry_run: bool = Query(False, description="If true, returns what WOULD be enriched without modifying DB")
+):
+    """
+    Find places missing healing_score/crowd_level and estimate them.
+    
+    Args:
+        dry_run: preview changes without persisting
+    
+    Returns:
+        Summary of enrichment operation
+    """
+    place_repo = get_place_repository()
+    
+    try:
+        result = await place_repo.enrich_missing_scores(dry_run)
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enrich scores. Error: {str(e)}"
+        )
