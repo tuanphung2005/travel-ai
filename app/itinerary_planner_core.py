@@ -101,7 +101,9 @@ class ItineraryPlanner:
         excluded_phrases = [
             "công ty", "cong ty", "tnhh", "travel agency", 
             "phòng vé", "phong ve", "đại lý", "dai ly", 
-            "nhà xe", "nha xe", "jsc"
+            "nhà xe", "nha xe", "jsc", "bệnh viện", "benh vien", 
+            "phòng khám", "phong kham", "nha khoa", "clinic", 
+            "hospital", "thẩm mỹ viện", "tham my vien", "trung tâm y tế"
         ]
         if any(phrase in name_lower for phrase in excluded_phrases):
             return False
