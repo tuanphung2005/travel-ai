@@ -63,7 +63,7 @@ class AIStopSuggestion(BaseModel):
     rating: float
     estimated_cost_vnd: int = 0
     final_score: float = 0.0
-    mood_score_breakdown: dict[Mood, float] = Field(default_factory=dict)
+    mood_score_breakdown: dict[str, float] = Field(default_factory=dict)
     is_hotel_anchor: bool = False
 
 class AIDayPlan(BaseModel):
@@ -80,6 +80,7 @@ class AIDayPlan(BaseModel):
     saved_vs_budget: int
     explanations: list[str] = []
     summary: str
+    weather: Optional[dict] = None
 
 class AICandidatePlace(BaseModel):
     """A place evaluated by the AI for inclusion."""
@@ -89,7 +90,7 @@ class AICandidatePlace(BaseModel):
     rating: float
     estimated_cost_vnd: int
     final_score: float
-    mood_score_breakdown: dict[Mood, float] = Field(default_factory=dict)
+    mood_score_breakdown: dict[str, float] = Field(default_factory=dict)
     reasoning: Optional[str] = None
     selected: bool = False
 
