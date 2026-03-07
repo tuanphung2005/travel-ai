@@ -20,6 +20,7 @@ from app.planning_utils import (
     calculate_hotel_night_cost,
     calculate_place_score,
     weather_score_bonus,
+    deduplicate_similar_places,
 )
 
 
@@ -109,6 +110,9 @@ class ItineraryPlanner:
 
     def _build_candidates(self, day_weather: Optional[DailyWeather] = None) -> list[tuple[PlaceData, float, dict[str, float]]]:
         filtered_places = [place for place in self.places if self._matches_category_filters(place)]
+        
+        # Deduplicate places with very similar names (e.g., restaurant branches)
+        filtered_places = deduplicate_similar_places(filtered_places)
         
         # Exclude hotels from normal stops if they are handled as an anchor
         if self.primary_hotel:
