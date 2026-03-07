@@ -64,6 +64,88 @@ MOOD_CATEGORY_BONUS = {
     },
 }
 
+INDOOR_CATEGORIES = {"CAFE", "RESTAURANT", "TEAHOUSE", "BAKERY", "SPA", "WELLNESS", "HOTEL", "MUSEUM", "SHOPPING"}
+OUTDOOR_CATEGORIES = {"PARK", "NATURE", "STREET_FOOD", "MARKET", "BEACH"}
+
+
+def classify_indoor_outdoor(place: PlaceData) -> str:
+    """Return 'indoor', 'outdoor', or 'neutral' based on category."""
+    category = normalize_category(place.category, place.tags)
+    if category in INDOOR_CATEGORIES:
+        return "indoor"
+    if category in OUTDOOR_CATEGORIES:
+        return "outdoor"
+    return "neutral"
+
+
+def weather_score_bonus(place: PlaceData, condition: str) -> float:
+    """
+    Return a score bonus based on weather condition.
+    - Rainy (Rain, Snow, Thunderstorm, Drizzle) -> boost indoor, penalize outdoor
+    - Clear -> boost outdoor, penalize indoor
+    """
+    env_type = classify_indoor_outdoor(place)
+    
+    # OWM main conditions: Thunderstorm, Drizzle, Rain, Snow, Clear, Clouds
+    is_rainy = condition in ("Rain", "Snow", "Drizzle", "Thunderstorm")
+    is_clear = condition == "Clear"
+
+    if is_rainy:
+        if env_type == "indoor":
+            return 15.0
+        elif env_type == "outdoor":
+            return -10.0
+            
+    if is_clear:
+        if env_type == "outdoor":
+            return 10.0
+        elif env_type == "indoor":
+            return -5.0
+
+    return 0.0
+
+
+INDOOR_CATEGORIES = {"CAFE", "RESTAURANT", "TEAHOUSE", "BAKERY", "SPA", "WELLNESS", "HOTEL", "MUSEUM", "SHOPPING"}
+OUTDOOR_CATEGORIES = {"PARK", "NATURE", "STREET_FOOD", "MARKET", "BEACH"}
+
+
+def classify_indoor_outdoor(place: PlaceData) -> str:
+    """Return 'indoor', 'outdoor', or 'neutral' based on category."""
+    category = normalize_category(place.category, place.tags)
+    if category in INDOOR_CATEGORIES:
+        return "indoor"
+    if category in OUTDOOR_CATEGORIES:
+        return "outdoor"
+    return "neutral"
+
+
+def weather_score_bonus(place: PlaceData, condition: str) -> float:
+    """
+    Return a score bonus based on weather condition.
+    - Rainy (Rain, Snow, Thunderstorm, Drizzle) -> boost indoor, penalize outdoor
+    - Clear -> boost outdoor, penalize indoor
+    """
+    env_type = classify_indoor_outdoor(place)
+    
+    # OWM main conditions: Thunderstorm, Drizzle, Rain, Snow, Clear, Clouds
+    is_rainy = condition in ("Rain", "Snow", "Drizzle", "Thunderstorm")
+    is_clear = condition == "Clear"
+
+    if is_rainy:
+        if env_type == "indoor":
+            return 15.0
+        elif env_type == "outdoor":
+            return -10.0
+            
+    if is_clear:
+        if env_type == "outdoor":
+            return 10.0
+        elif env_type == "indoor":
+            return -5.0
+
+    return 0.0
+
+
 
 def normalize_category(raw_category: str, tags: list[str]) -> str:
     """Normalize category into richer category labels for mood matching."""

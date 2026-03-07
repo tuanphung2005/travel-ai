@@ -100,6 +100,7 @@ def map_day_plans_to_response(day_plans: list[dict]) -> list[AIDayPlan]:
             saved_vs_budget=day_plan.get("saved_vs_budget", 0),
             explanations=day_plan.get("explanations", []),
             summary=day_plan["summary"],
+            weather=day_plan.get("weather"),
         ))
 
     return response_days

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.planning_types import PlaceData
+from app.services.weather_service import DailyWeather
 from app.planning_utils import (
     TRAVEL_STYLE_CONFIG,
     AVERAGE_TRAVEL_SPEED_KMH,
@@ -18,6 +19,7 @@ from app.planning_utils import (
     normalize_category,
     calculate_hotel_night_cost,
     calculate_place_score,
+    weather_score_bonus,
 )
 
 
@@ -40,6 +42,7 @@ class ItineraryPlanner:
         max_places_per_day: int = 5,
         must_include_categories: Optional[list[str]] = None,
         exclude_categories: Optional[list[str]] = None,
+        daily_weather: Optional[list[DailyWeather]] = None,
     ):
         self.places = places
         self.start_date = start_date
@@ -56,6 +59,7 @@ class ItineraryPlanner:
         self.max_places_per_day = max(1, min(5, int(max_places_per_day)))
         self.must_include_categories = {c.upper() for c in (must_include_categories or [])}
         self.exclude_categories = {c.upper() for c in (exclude_categories or [])}
+        self.daily_weather = daily_weather or []
 
         self.num_days = (end_date - start_date).days + 1
         self.distance_matrix = build_distance_matrix(places)
@@ -103,7 +107,7 @@ class ItineraryPlanner:
 
         return True
 
-    def _build_candidates(self) -> list[tuple[PlaceData, float, dict[str, float]]]:
+    def _build_candidates(self, day_weather: Optional[DailyWeather] = None) -> list[tuple[PlaceData, float, dict[str, float]]]:
         filtered_places = [place for place in self.places if self._matches_category_filters(place)]
         
         # Exclude hotels from normal stops if they are handled as an anchor
@@ -136,6 +140,14 @@ class ItineraryPlanner:
             
             # Combine them: 60% mood, 40% style
             final_score = round(mood_score * 0.6 + style_score * 0.4, 2)
+            
+            # Apply weather bonus if available
+            if day_weather:
+                w_bonus = weather_score_bonus(place, day_weather.condition)
+                if w_bonus != 0:
+                    final_score = round(final_score + w_bonus, 2)
+                    breakdown[f"Weather ({day_weather.condition})"] = w_bonus
+
             scored.append((place, final_score, breakdown))
 
         scored.sort(
@@ -253,9 +265,6 @@ class ItineraryPlanner:
             f"with mood distribution {self.mood_distribution} and budget {self.daily_budget_vnd:,} VND/day."
         )
 
-        candidates = self._build_candidates()
-        self.planning_notes.append(f"Candidate pool size after filtering/ranking: {self.candidate_pool_size}")
-
         day_plans = []
         used_place_ids: set[str] = set()
         total_spent = 0
@@ -263,6 +272,20 @@ class ItineraryPlanner:
         for day_idx in range(self.num_days):
             day_number = day_idx + 1
             day_date = self.start_date + timedelta(days=day_idx)
+            
+            day_weather = None
+            if self.daily_weather:
+                for w in self.daily_weather:
+                    if w.date == day_date.date():
+                        day_weather = w
+                        break
+            
+            candidates = self._build_candidates(day_weather)
+            if day_idx == 0:
+                self.planning_notes.append(f"Candidate pool size after filtering/ranking: {self.candidate_pool_size}")
+            
+            if day_weather:
+                self.planning_notes.append(f"Day {day_number} weather: {day_weather.condition} ({day_weather.description}).")
 
             if self.total_budget_vnd > 0:
                 total_remaining = max(0, self.total_budget_vnd - total_spent)
@@ -322,13 +345,14 @@ class ItineraryPlanner:
                     cost = 0
                 else:
                     duration = calculate_stop_duration(place, self.travel_style)
+                    w_cond = f" ({day_weather.condition})" if day_weather else ""
                     reason = generate_stop_reason(
                         place,
                         self.travel_style,
                         day_number,
                         order,
                         distance,
-                        mood_label=", ".join(self.mood_distribution.keys()),
+                        mood_label=", ".join(self.mood_distribution.keys()) + w_cond,
                         final_score=score_by_id.get(place.id, 0.0),
                     )
                     cost = place.estimated_cost_vnd
@@ -384,7 +408,7 @@ class ItineraryPlanner:
             else:
                 summary = f"Day {day_number}: Free day for personal exploration."
 
-            day_plans.append({
+            day_dict = {
                 "day_number": day_number,
                 "date": day_date,
                 "stops": stops,
@@ -397,7 +421,17 @@ class ItineraryPlanner:
                 "saved_vs_budget": remaining_today,
                 "explanations": day_explanations,
                 "summary": summary,
-            })
+            }
+            if day_weather:
+                day_dict["weather"] = {
+                    "condition": day_weather.condition,
+                    "description": day_weather.description,
+                    "temp_min_c": day_weather.temp_min_c,
+                    "temp_max_c": day_weather.temp_max_c,
+                    "rain_probability": day_weather.rain_probability,
+                    "icon": day_weather.icon,
+                }
+            day_plans.append(day_dict)
 
         self.planning_notes.append(
             f"Planning complete. Total stops: {sum(len(d['stops']) for d in day_plans)}"
