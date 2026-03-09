@@ -24,7 +24,6 @@ from app.services.journey_planning import (
     select_related_place_docs,
     to_place_data_list,
 )
-from app.services.weather_service import fetch_daily_weather
 
 router = APIRouter(prefix="/journeys", tags=["AI Planning"])
 
@@ -107,28 +106,9 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
     candidate_pool_size = 0
     generation_time_ms = 0
 
-
     if request.auto_plan:
         start_time = time.time()
         places = to_place_data_list(selected_docs)
-
-        daily_weather = None
-        lat = request.start_location.get("latitude") if request.start_location else None
-        lon = request.start_location.get("longitude") if request.start_location else None
-        if not lat and places:
-            lat = sum(p.latitude for p in places) / len(places)
-            lon = sum(p.longitude for p in places) / len(places)
-        
-        if lat and lon:
-            try:
-                daily_weather = await fetch_daily_weather(
-                    lat=lat, 
-                    lon=lon, 
-                    start_date=request.start_date.date(), 
-                    num_days=total_days
-                )
-            except Exception as e:
-                print(f"[WEATHER_ERROR] Failed to fetch weather: {e}")
 
         planner = ItineraryPlanner(
             places=places,
@@ -145,7 +125,6 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
             max_places_per_day=5,
             must_include_categories=request.must_include_categories,
             exclude_categories=request.exclude_categories,
-            daily_weather=daily_weather,
         )
         day_plans = planner.plan()
         generation_time_ms = int((time.time() - start_time) * 1000)
@@ -294,24 +273,6 @@ async def generate_ai_plan(
             detail=f"Request total_days={request.total_days} does not match journey range ({total_days})"
         )
     
-    daily_weather = None
-    lat = request.start_location.get("latitude") if request.start_location else None
-    lon = request.start_location.get("longitude") if request.start_location else None
-    if not lat and places:
-        lat = sum(p.latitude for p in places) / len(places)
-        lon = sum(p.longitude for p in places) / len(places)
-
-    if lat and lon:
-        try:
-            daily_weather = await fetch_daily_weather(
-                lat=lat, 
-                lon=lon, 
-                start_date=start_date.date(), 
-                num_days=total_days
-            )
-        except Exception as e:
-            print(f"[WEATHER_ERROR] Failed to fetch weather: {e}")
-
     # Step 5: Run AI planning algorithm
     planner = ItineraryPlanner(
         places=places,
@@ -328,7 +289,6 @@ async def generate_ai_plan(
         max_places_per_day=request.max_places_per_day,
         must_include_categories=request.must_include_categories,
         exclude_categories=request.exclude_categories,
-        daily_weather=daily_weather,
     )
     
     day_plans = planner.plan()

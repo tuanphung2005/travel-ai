@@ -100,7 +100,6 @@ def map_day_plans_to_response(day_plans: list[dict]) -> list[AIDayPlan]:
             saved_vs_budget=day_plan.get("saved_vs_budget", 0),
             explanations=day_plan.get("explanations", []),
             summary=day_plan["summary"],
-            weather=day_plan.get("weather"),
         ))
 
     return response_days
@@ -190,48 +189,20 @@ async def select_related_place_docs(
 
     selected_docs: list[dict] = []
     selected_ids: set[str] = set()
-    category_counts: dict[str, int] = {}
-    
-    # Allow up to 50% of max_places to be from the same category, minimum 3
-    max_per_category = max(3, max_places // 2)
 
     if seed_doc:
         seed_id = str(seed_doc["_id"])
         selected_docs.append(seed_doc)
         selected_ids.add(seed_id)
-        
-        seed_cat = seed_doc.get("category", "ATTRACTION")
-        category_counts[seed_cat] = 1
 
-    # First pass: try to pick diverse places
     for doc in ranked_docs:
         place_id = str(doc["_id"])
         if place_id in selected_ids:
             continue
-            
-        cat = doc.get("category", "ATTRACTION")
-        if category_counts.get(cat, 0) >= max_per_category:
-            continue
-            
         selected_docs.append(doc)
         selected_ids.add(place_id)
-        category_counts[cat] = category_counts.get(cat, 0) + 1
-        
         if len(selected_docs) >= max_places:
             break
-            
-    # Second pass: if we still need more places to reach max_places, ignore category cap
-    if len(selected_docs) < max_places:
-        for doc in ranked_docs:
-            place_id = str(doc["_id"])
-            if place_id in selected_ids:
-                continue
-                
-            selected_docs.append(doc)
-            selected_ids.add(place_id)
-            
-            if len(selected_docs) >= max_places:
-                break
 
     if not selected_docs:
         raise ValueError("Could not select places for the new journey")

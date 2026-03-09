@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     
     # Optional settings with defaults
     DEBUG: bool = False
-    OPENWEATHERMAP_API_KEY: str | None = None
     
     class Config:
         env_file = ".env"

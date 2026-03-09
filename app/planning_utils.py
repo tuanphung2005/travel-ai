@@ -1,7 +1,5 @@
 """Pure planning utilities used by the itinerary planner."""
 import math
-import re
-import difflib
 from typing import Optional
 
 from app.planning_types import PlaceData
@@ -65,88 +63,6 @@ MOOD_CATEGORY_BONUS = {
         "MARKET": 25,
     },
 }
-
-INDOOR_CATEGORIES = {"CAFE", "RESTAURANT", "TEAHOUSE", "BAKERY", "SPA", "WELLNESS", "HOTEL", "MUSEUM", "SHOPPING"}
-OUTDOOR_CATEGORIES = {"PARK", "NATURE", "STREET_FOOD", "MARKET", "BEACH"}
-
-
-def classify_indoor_outdoor(place: PlaceData) -> str:
-    """Return 'indoor', 'outdoor', or 'neutral' based on category."""
-    category = normalize_category(place.category, place.tags)
-    if category in INDOOR_CATEGORIES:
-        return "indoor"
-    if category in OUTDOOR_CATEGORIES:
-        return "outdoor"
-    return "neutral"
-
-
-def weather_score_bonus(place: PlaceData, condition: str) -> float:
-    """
-    Return a score bonus based on weather condition.
-    - Rainy (Rain, Snow, Thunderstorm, Drizzle) -> boost indoor, penalize outdoor
-    - Clear -> boost outdoor, penalize indoor
-    """
-    env_type = classify_indoor_outdoor(place)
-    
-    # OWM main conditions: Thunderstorm, Drizzle, Rain, Snow, Clear, Clouds
-    is_rainy = condition in ("Rain", "Snow", "Drizzle", "Thunderstorm")
-    is_clear = condition == "Clear"
-
-    if is_rainy:
-        if env_type == "indoor":
-            return 15.0
-        elif env_type == "outdoor":
-            return -10.0
-            
-    if is_clear:
-        if env_type == "outdoor":
-            return 10.0
-        elif env_type == "indoor":
-            return -5.0
-
-    return 0.0
-
-
-INDOOR_CATEGORIES = {"CAFE", "RESTAURANT", "TEAHOUSE", "BAKERY", "SPA", "WELLNESS", "HOTEL", "MUSEUM", "SHOPPING"}
-OUTDOOR_CATEGORIES = {"PARK", "NATURE", "STREET_FOOD", "MARKET", "BEACH"}
-
-
-def classify_indoor_outdoor(place: PlaceData) -> str:
-    """Return 'indoor', 'outdoor', or 'neutral' based on category."""
-    category = normalize_category(place.category, place.tags)
-    if category in INDOOR_CATEGORIES:
-        return "indoor"
-    if category in OUTDOOR_CATEGORIES:
-        return "outdoor"
-    return "neutral"
-
-
-def weather_score_bonus(place: PlaceData, condition: str) -> float:
-    """
-    Return a score bonus based on weather condition.
-    - Rainy (Rain, Snow, Thunderstorm, Drizzle) -> boost indoor, penalize outdoor
-    - Clear -> boost outdoor, penalize indoor
-    """
-    env_type = classify_indoor_outdoor(place)
-    
-    # OWM main conditions: Thunderstorm, Drizzle, Rain, Snow, Clear, Clouds
-    is_rainy = condition in ("Rain", "Snow", "Drizzle", "Thunderstorm")
-    is_clear = condition == "Clear"
-
-    if is_rainy:
-        if env_type == "indoor":
-            return 15.0
-        elif env_type == "outdoor":
-            return -10.0
-            
-    if is_clear:
-        if env_type == "outdoor":
-            return 10.0
-        elif env_type == "indoor":
-            return -5.0
-
-    return 0.0
-
 
 
 def normalize_category(raw_category: str, tags: list[str]) -> str:
@@ -481,65 +397,3 @@ def generate_stop_reason(
     reasons.append(f"aligned with mood {mood_label} (score {final_score})")
 
     return ". ".join(filter(None, reasons)) + "."
-
-
-def deduplicate_similar_places(places: list[PlaceData]) -> list[PlaceData]:
-    """
-    Remove places that are likely branches of the same restaurant/attraction.
-    Keeps the one with the highest quality score.
-    """
-    if not places:
-        return []
-        
-    def normalize_name(name: str) -> str:
-        s = name.lower()
-        # Remove common branch indicators
-        s = re.sub(r'cơ\s*sở\s*\d+', '', s)
-        s = re.sub(r'chi\s*nhánh\s*\d+', '', s)
-        # Remove trailing digits and punctuation
-        s = re.sub(r'[\s-]*\d+$', '', s)
-        s = re.sub(r'[^\w\s]', '', s)
-        # Handle cases like "met 2" by extracting the main words if it ends with digit
-        s = s.strip()
-        return s
-    
-    # Sort places by a quality metric so we keep the best ones first
-    sorted_places = sorted(
-        places, 
-        key=lambda p: (p.rating * math.log10(max(1, p.review_count)) if p.review_count > 0 else 0), 
-        reverse=True
-    )
-    
-    kept = []
-    
-    for place in sorted_places:
-        norm_name = normalize_name(place.name)
-        is_duplicate = False
-        
-        for k in kept:
-            # Only deduplicate if they are same category type
-            if place.category != k.category:
-                continue
-            
-            k_norm_name = normalize_name(k.name)
-            
-            if not norm_name or not k_norm_name:
-                continue
-                
-            # Exact match on normalized name
-            if norm_name == k_norm_name:
-                is_duplicate = True
-                break
-                
-            # If name is long enough, use difflib
-            # E.g. "met vietnamese restaurant vegetarian food" vs "met vietnamese restaurant vegetarian met"
-            if len(norm_name) > 8 and len(k_norm_name) > 8:
-                ratio = difflib.SequenceMatcher(None, norm_name, k_norm_name).ratio()
-                if ratio > 0.85:
-                    is_duplicate = True
-                    break
-                    
-        if not is_duplicate:
-            kept.append(place)
-            
-    return kept
