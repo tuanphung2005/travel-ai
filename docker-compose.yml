@@ -5,6 +5,6 @@ services:
     build: .
     container_name: travel-backend-api
     ports:
-      - "8000:8000"
+      - "8000:7860"
     env_file:
       - .env
