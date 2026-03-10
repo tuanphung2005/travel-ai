@@ -1,3 +1,11 @@
+---
+title: travel-ai
+emoji: 🌍
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
 places:
 [
   {
