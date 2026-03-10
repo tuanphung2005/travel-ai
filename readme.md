@@ -4,7 +4,9 @@ emoji: 🌍
 colorFrom: blue
 colorTo: green
 sdk: docker
-app_file: app/main.py
+sdk_version: "docker"
+python_version: "3.12"
+app_file: app.py
 pinned: false
 ---
 places:
