@@ -1,5 +1,6 @@
 """Shared types for itinerary planning."""
 from dataclasses import dataclass
+from datetime import date
 
 
 @dataclass
@@ -19,6 +20,18 @@ class PlaceData:
     crowd_level: int
     price_level: int = 0
     image_url: str | None = None
+
+
+@dataclass
+class DailyWeather:
+    """Weather snapshot for a single itinerary day."""
+    date: date
+    condition: str
+    description: str
+    temp_min_c: float | None = None
+    temp_max_c: float | None = None
+    rain_probability: float | None = None
+    icon: str | None = None
 
 
 @dataclass

@@ -4,8 +4,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from app.planning_types import PlaceData
-from app.services.weather_service import DailyWeather
+from app.planning_types import DailyWeather, PlaceData
 from app.planning_utils import (
     TRAVEL_STYLE_CONFIG,
     AVERAGE_TRAVEL_SPEED_KMH,

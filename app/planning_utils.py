@@ -1,5 +1,6 @@
 """Pure planning utilities used by the itinerary planner."""
 import math
+import re
 from typing import Optional
 
 from app.planning_types import PlaceData
@@ -88,6 +89,33 @@ def normalize_category(raw_category: str, tags: list[str]) -> str:
     return base or "ATTRACTION"
 
 
+def deduplicate_similar_places(places: list[PlaceData]) -> list[PlaceData]:
+    """Collapse obvious branch duplicates while keeping the strongest candidate."""
+    def canonical_name(name: str) -> str:
+        normalized = str(name or "").lower()
+        normalized = re.sub(r"\([^)]*\)", " ", normalized)
+        normalized = re.sub(r"\b(branch|cn\d*|cs\d*|co\s*so\s*\d+)\b", " ", normalized)
+        normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
+    best_by_key: dict[tuple[str, str], PlaceData] = {}
+    for place in places:
+        category = normalize_category(place.category, place.tags)
+        key = (canonical_name(place.name), category)
+        existing = best_by_key.get(key)
+        if existing is None:
+            best_by_key[key] = place
+            continue
+
+        existing_score = (existing.rating, existing.review_count, -existing.estimated_cost_vnd)
+        candidate_score = (place.rating, place.review_count, -place.estimated_cost_vnd)
+        if candidate_score > existing_score:
+            best_by_key[key] = place
+
+    return list(best_by_key.values())
+
+
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate the great-circle distance between two points on Earth in km."""
     radius_earth_km = 6371.0
@@ -146,6 +174,36 @@ def blended_mood_score(
         total += normalized_weight * score
 
     return round(total, 2), breakdown
+
+
+def weather_score_bonus(place: PlaceData, condition: str) -> float:
+    """Return a modest score adjustment based on weather suitability."""
+    category = normalize_category(place.category, place.tags)
+    normalized_condition = str(condition or "").strip().lower()
+
+    rainy_conditions = {"rain", "drizzle", "thunderstorm", "storm", "shower"}
+    hot_conditions = {"clear", "sunny", "hot"}
+    mild_conditions = {"clouds", "cloudy", "mist", "fog", "haze", "overcast"}
+
+    if normalized_condition in rainy_conditions:
+        if category in {"CAFE", "TEAHOUSE", "BAKERY", "RESTAURANT", "SPA", "HOTEL", "MARKET"}:
+            return 6.0
+        if category in {"NATURE", "PARK"}:
+            return -10.0
+        if category == "ATTRACTION":
+            return -4.0
+
+    if normalized_condition in hot_conditions:
+        if category in {"NATURE", "PARK", "ATTRACTION", "MARKET"}:
+            return 4.0
+        if category in {"SPA", "HOTEL"}:
+            return -2.0
+
+    if normalized_condition in mild_conditions:
+        if category in {"ATTRACTION", "CAFE", "RESTAURANT", "MARKET"}:
+            return 2.0
+
+    return 0.0
 
 
 def build_distance_matrix(places: list[PlaceData]) -> dict[str, dict[str, float]]:
