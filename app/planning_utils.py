@@ -91,29 +91,90 @@ def normalize_category(raw_category: str, tags: list[str]) -> str:
 
 def deduplicate_similar_places(places: list[PlaceData]) -> list[PlaceData]:
     """Collapse obvious branch duplicates while keeping the strongest candidate."""
+    import unicodedata
+    import difflib
+
     def canonical_name(name: str) -> str:
-        normalized = str(name or "").lower()
+        # 1. Normalize unicode (convert accented chars to ASCII)
+        normalized = unicodedata.normalize('NFKD', str(name or "")).encode('ASCII', 'ignore').decode('utf-8').lower()
+        
+        # 2. Remove parenthesized text
         normalized = re.sub(r"\([^)]*\)", " ", normalized)
-        normalized = re.sub(r"\b(branch|cn\d*|cs\d*|co\s*so\s*\d+)\b", " ", normalized)
+        
+        # 3. Strip known branch indicators
+        normalized = re.sub(r"(@|-|\|).*$", " ", normalized)
+        
+        # 4. Remove apostrophes so "4p's" and "4p’s" become "4ps"
+        normalized = re.sub(r"[']", "", normalized)
+        
+        # 5. Remove any non-alphanumeric chars
         normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+        
+        # 6. Remove common Vietnamese branch keywords
+        normalized = re.sub(r"\b(branch|chi nhanh|co so|coso|cn|cs)\s*\d*\w*\b", " ", normalized)
+        
+        # 7. Remove "met \d+" at the end ONLY (to prevent removing brand name MẸT at the start)
+        normalized = re.sub(r"\bmet\s+\d+\s*$", " ", normalized)
+        
+        # 8. Final cleanup: remove isolated trailing numbers
+        normalized = re.sub(r"\b\d+\s*$", " ", normalized)
+        
+        # Replace multiple spaces with single space
         normalized = re.sub(r"\s+", " ", normalized).strip()
         return normalized
 
-    best_by_key: dict[tuple[str, str], PlaceData] = {}
+    # Group similar places
+    groups: list[dict] = []
+    
     for place in places:
         category = normalize_category(place.category, place.tags)
-        key = (canonical_name(place.name), category)
-        existing = best_by_key.get(key)
-        if existing is None:
-            best_by_key[key] = place
-            continue
+        can = canonical_name(place.name)
+        
+        # Add category to canonical name context to prevent merging different type places
+        # that happen to share a name (e.g. "Met cafe" vs "Met restaurant" if they exist)
+        can_with_cat = f"{can} | {category}"
+        
+        matched_group = None
+        for group in groups:
+            # Check if canonical name is very similar
+            similarity = difflib.SequenceMatcher(None, can_with_cat, group['canonical']).ratio()
+            
+            # They match if they are very similar, or one is a strict prefix of another
+            # (e.g. "pizza 4ps" and "pizza 4ps trang tien") AND category matches
+            if similarity > 0.85 or (
+                group['category'] == category and (
+                    can.startswith(group['base_canonical']) or 
+                    group['base_canonical'].startswith(can)
+                ) and len(can) > 5 and len(group['base_canonical']) > 5
+            ):
+                matched_group = group
+                break
+                
+        if matched_group:
+            matched_group['places'].append(place)
+        else:
+            groups.append({
+                'canonical': can_with_cat, 
+                'base_canonical': can,
+                'category': category,
+                'places': [place]
+            })
 
-        existing_score = (existing.rating, existing.review_count, -existing.estimated_cost_vnd)
-        candidate_score = (place.rating, place.review_count, -place.estimated_cost_vnd)
-        if candidate_score > existing_score:
-            best_by_key[key] = place
+    # Pick best place from each group
+    best_places = []
+    for group in groups:
+        best_place = None
+        best_score = None
+        for p in group['places']:
+            score = (p.rating, p.review_count, -p.estimated_cost_vnd)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_place = p
+                
+        if best_place:
+            best_places.append(best_place)
 
-    return list(best_by_key.values())
+    return best_places
 
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
