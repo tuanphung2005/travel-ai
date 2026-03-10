@@ -1,9 +1,12 @@
 ---
-title: Travel Ai
-emoji: 📉
-colorFrom: yellow
-colorTo: purple
+title: travel-ai
+emoji: 🌍
+colorFrom: blue
+colorTo: green
 sdk: docker
+sdk_version: "docker"
+python_version: "3.12"
+app_file: app.py
 pinned: false
 ---
 
