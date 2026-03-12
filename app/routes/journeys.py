@@ -1,7 +1,7 @@
 """
 API Routes for typical Journey CRUD operations.
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Query
 from app.repositories import (
     get_journey_repository,
     get_place_repository,
@@ -15,10 +15,10 @@ router = APIRouter(prefix="/journeys", tags=["Journeys"])
     summary="List recent journeys",
     description="List recent journeys to quickly discover valid journey IDs"
 )
-async def list_journeys(limit: int = 20):
+async def list_journeys(limit: int = Query(20, ge=0, le=100)):
     """List recent journeys."""
     journey_repo = get_journey_repository()
-    safe_limit = max(1, min(limit, 100))
+    safe_limit = limit
     journeys = await journey_repo.list_recent(limit=safe_limit)
 
     results = []
