@@ -166,9 +166,6 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
     - Optimize visit order within each day
     - Adjust durations based on travel style
     
-    **Important**: The AI only uses places from the database.
-    It does NOT hallucinate or invent new places.
-    
     Travel styles:
     - **sightseeing**: More stops, shorter durations
     - **relaxing**: Fewer stops, longer durations  
