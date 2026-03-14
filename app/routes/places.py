@@ -1,7 +1,7 @@
 """
 API Routes for Places endpoints.
 """
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Path
 from typing import Optional
 
 from app.repositories import get_place_repository
@@ -12,6 +12,7 @@ router = APIRouter(prefix="/places", tags=["Places"])
 @router.get(
     "",
     summary="Get all places",
+    response_description="List of approved places",
     description="Get list of all approved places with optional filtering"
 )
 async def get_places(
@@ -48,9 +49,15 @@ async def get_places(
 @router.get(
     "/{place_id}",
     summary="Get place details",
-    description="Get detailed information about a specific place"
+    response_description="Complete place document",
+    description="Get detailed information about a specific place",
+    responses={
+        404: {"description": "Place not found"},
+    },
 )
-async def get_place(place_id: str):
+async def get_place(
+    place_id: str = Path(..., description="Place ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f222"])
+):
     """
     Get place by ID.
     
@@ -76,12 +83,16 @@ async def get_place(place_id: str):
 @router.get(
     "/nearby/search",
     summary="Find nearby places",
-    description="Find places near a geographic point"
+    response_description="Nearby places sorted by proximity",
+    description="Find places near a geographic point",
+    responses={
+        500: {"description": "Geospatial query failed or missing 2dsphere index"},
+    },
 )
 async def find_nearby_places(
-    longitude: float = Query(..., description="Center point longitude"),
-    latitude: float = Query(..., description="Center point latitude"),
-    max_distance: int = Query(5000, ge=100, le=50000, description="Max distance in meters")
+    longitude: float = Query(..., ge=-180, le=180, description="Center point longitude", examples=[108.2208]),
+    latitude: float = Query(..., ge=-90, le=90, description="Center point latitude", examples=[16.0544]),
+    max_distance: int = Query(5000, ge=100, le=50000, description="Max distance in meters", examples=[3000])
 ):
     """
     Find places near a geographic point.
@@ -114,10 +125,14 @@ async def find_nearby_places(
 @router.post(
     "/enrich-scores",
     summary="Estimate and enrich missing healing/crowd scores",
-    description="Uses rule-based heuristics to infer healing_score and crowd_level for places that lack them."
+    response_description="Summary of updated and skipped places",
+    description="Uses rule-based heuristics to infer healing_score and crowd_level for places that lack them.",
+    responses={
+        500: {"description": "Enrichment process failed"},
+    },
 )
 async def enrich_place_scores(
-    dry_run: bool = Query(False, description="If true, returns what WOULD be enriched without modifying DB")
+    dry_run: bool = Query(False, description="If true, returns what WOULD be enriched without modifying DB", examples=[True])
 ):
     """
     Find places missing healing_score/crowd_level and estimate them.

@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="Travel Backend API",
+    summary="AI-assisted travel planning API",
     description="""
     ## Travel Application Backend with AI-Assisted Itinerary Planning
     
@@ -62,11 +63,40 @@ app = FastAPI(
     - Groups nearby places into same day
     - Optimizes route order using nearest neighbor algorithm
     - Adjusts for travel style (sightseeing/relaxing/balanced)
-    
-    **Important**: The AI only uses places from the database.
-    It does NOT hallucinate or invent new places.
+
     """,
     version="1.0.0",
+    contact={
+        "name": "Travel Backend Team",
+        "url": "https://example.com/support",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
+    openapi_tags=[
+        {
+            "name": "Health",
+            "description": "Service health and readiness endpoints.",
+        },
+        {
+            "name": "Places",
+            "description": "Browse and query approved travel places.",
+        },
+        {
+            "name": "Journeys",
+            "description": "CRUD and manual stop management for journeys.",
+        },
+        {
+            "name": "AI Planning",
+            "description": "Generate and explain deterministic AI-assisted itineraries.",
+        },
+    ],
+    servers=[
+        {
+            "url": "/",
+            "description": "Current environment",
+        }
+    ],
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -88,7 +118,12 @@ app.include_router(planning.router, prefix="/api/v1")
 app.include_router(debug.router)
 
 
-@app.get("/", tags=["Health"])
+@app.get(
+    "/",
+    tags=["Health"],
+    summary="API root",
+    response_description="Basic service metadata and docs link",
+)
 async def root():
     """Root endpoint - Health check."""
     return {
@@ -99,7 +134,12 @@ async def root():
     }
 
 
-@app.get("/health", tags=["Health"])
+@app.get(
+    "/health",
+    tags=["Health"],
+    summary="Health check",
+    response_description="Basic health status for API and database connectivity",
+)
 async def health_check():
     """Detailed health check endpoint."""
     return {

@@ -1,7 +1,7 @@
 """
 API Routes for typical Journey CRUD operations.
 """
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Path
 from app.repositories import (
     get_journey_repository,
     get_place_repository,
@@ -13,6 +13,7 @@ router = APIRouter(prefix="/journeys", tags=["Journeys"])
 @router.get(
     "",
     summary="List recent journeys",
+    response_description="Array of recent journeys with compact metadata",
     description="List recent journeys to quickly discover valid journey IDs"
 )
 async def list_journeys(limit: int = Query(20, ge=0, le=100)):
@@ -42,9 +43,15 @@ async def list_journeys(limit: int = Query(20, ge=0, le=100)):
 @router.get(
     "/{journey_id}",
     summary="Get journey details",
-    description="Get full journey details including all days and stops"
+    response_description="Full journey document including days and stops",
+    description="Get full journey details including all days and stops",
+    responses={
+        404: {"description": "Journey not found"},
+    },
 )
-async def get_journey(journey_id: str):
+async def get_journey(
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"])
+):
     """Get journey by ID."""
     journey_repo = get_journey_repository()
     
@@ -64,9 +71,15 @@ async def get_journey(journey_id: str):
 @router.delete(
     "/{journey_id}",
     summary="Delete a journey",
-    description="Delete a journey completely from the database"
+    response_description="Deletion confirmation",
+    description="Delete a journey completely from the database",
+    responses={
+        404: {"description": "Journey not found"},
+    },
 )
-async def delete_journey(journey_id: str):
+async def delete_journey(
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"])
+):
     """Delete a journey by ID."""
     journey_repo = get_journey_repository()
     
@@ -83,12 +96,18 @@ async def delete_journey(journey_id: str):
 @router.post(
     "/{journey_id}/days/{day_number}/stops/{place_id}",
     summary="Add a stop to a day",
-    description="Manually add a place to a specific day in the journey"
+    response_description="Confirmation that stop was added",
+    description="Manually add a place to a specific day in the journey",
+    responses={
+        400: {"description": "Day not found in journey"},
+        404: {"description": "Journey or place not found"},
+        500: {"description": "Failed to add stop"},
+    },
 )
 async def add_stop_to_day(
-    journey_id: str,
-    day_number: int,
-    place_id: str
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"]),
+    day_number: int = Path(..., ge=1, description="Day index in the journey", examples=[1]),
+    place_id: str = Path(..., description="Place ID to add", examples=["67fd123abc9876543210f222"]),
 ):
     """Add a stop to a specific day."""
     journey_repo = get_journey_repository()
@@ -151,12 +170,16 @@ async def add_stop_to_day(
 @router.delete(
     "/{journey_id}/days/{day_number}/stops/{place_id}",
     summary="Remove a stop from a day",
-    description="Remove a place from a specific day in the journey"
+    response_description="Confirmation that stop was removed",
+    description="Remove a place from a specific day in the journey",
+    responses={
+        500: {"description": "Failed to remove stop"},
+    },
 )
 async def remove_stop_from_day(
-    journey_id: str,
-    day_number: int,
-    place_id: str
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"]),
+    day_number: int = Path(..., ge=1, description="Day index in the journey", examples=[1]),
+    place_id: str = Path(..., description="Place ID to remove", examples=["67fd123abc9876543210f222"]),
 ):
     """Remove a stop from a specific day."""
     journey_repo = get_journey_repository()

@@ -1,5 +1,5 @@
 import time
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Path, status
 from datetime import datetime
 
 from app.models import (
@@ -30,7 +30,9 @@ router = APIRouter(prefix="/journeys", tags=["AI Planning"])
 @router.post(
     "/auto-create-related",
     response_model=CreateJourneyFromRelatedResponse,
+    status_code=status.HTTP_201_CREATED,
     summary="Create a new journey from related places",
+    response_description="Journey identifier plus optional auto-generated day plans",
     description="""
     Create a journey from related places and optionally auto-generate day plans.
 
@@ -40,7 +42,12 @@ router = APIRouter(prefix="/journeys", tags=["AI Planning"])
     - Rank by rating, review count, category match, and tag overlap
 
     This endpoint does not require any database schema changes.
-    """
+    """,
+    responses={
+        400: {"description": "Invalid date range or request constraints"},
+        404: {"description": "Seed place not found"},
+        500: {"description": "Journey creation failed"},
+    },
 )
 async def create_journey_from_related_places(request: CreateJourneyFromRelatedRequest):
     """Create a new journey and optionally auto-plan it using related places."""
@@ -156,6 +163,7 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
     "/{journey_id}/ai-plan",
     response_model=AIPlanResponse,
     summary="Generate AI-powered itinerary",
+    response_description="Generated itinerary and planning diagnostics",
     description="""
     Generate an AI-powered itinerary for a journey.
     
@@ -170,11 +178,16 @@ async def create_journey_from_related_places(request: CreateJourneyFromRelatedRe
     - **sightseeing**: More stops, shorter durations
     - **relaxing**: Fewer stops, longer durations  
     - **balanced**: Moderate pace
-    """
+    """,
+    responses={
+        400: {"description": "Invalid request parameters or missing planning data"},
+        403: {"description": "Only journey owner can regenerate in group mode"},
+        404: {"description": "Journey not found"},
+    },
 )
 async def generate_ai_plan(
-    journey_id: str,
-    request: AIPlanRequest
+    request: AIPlanRequest,
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"]),
 ):
     """
     Generate AI itinerary for a journey.
@@ -347,6 +360,7 @@ async def generate_ai_plan(
     "/{journey_id}/ai-explain",
     response_model=AIExplanation,
     summary="Get AI planning explanation",
+    response_description="Human-readable explanation of planning algorithm",
     description="""
     Get a detailed explanation of how the AI planning algorithm works.
     
@@ -355,9 +369,14 @@ async def generate_ai_plan(
     - How places are grouped
     - How travel style affects the plan
     - What constraints are applied
-    """
+    """,
+    responses={
+        404: {"description": "Journey not found"},
+    },
 )
-async def get_ai_explanation(journey_id: str):
+async def get_ai_explanation(
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"])
+):
     """
     Get explanation of AI planning algorithm.
     
@@ -436,9 +455,18 @@ async def get_ai_explanation(journey_id: str):
 @router.post(
     "/{journey_id}/days/{day_number}/improve-route-order",
     summary="Improve route order only",
-    description="Reorder existing day stops to reduce distance without regenerating itinerary"
+    response_description="Distance comparison before/after reordering",
+    description="Reorder existing day stops to reduce distance without regenerating itinerary",
+    responses={
+        400: {"description": "Day not found in journey"},
+        404: {"description": "Journey not found"},
+        500: {"description": "Failed to persist reordered stops"},
+    },
 )
-async def improve_route_order_only(journey_id: str, day_number: int):
+async def improve_route_order_only(
+    journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"]),
+    day_number: int = Path(..., ge=1, description="Day index within the journey", examples=[1]),
+):
     """Optimize stop order for one day and keep the same places."""
     journey_repo = get_journey_repository()
     journey = await journey_repo.get_by_id(journey_id)

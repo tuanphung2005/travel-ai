@@ -6,12 +6,12 @@ Mood = Literal["RESET_HEALING", "CHILL_CAFE", "NATURE_EXPLORE", "FOOD_LOCAL"]
 
 class AIPlanRequest(BaseModel):
     """Request body for AI itinerary planning."""
-    total_days: Optional[int] = Field(default=None, ge=1)
-    total_budget_vnd: int = Field(ge=0, description="Total trip budget in VND")
-    daily_budget_vnd: int = Field(ge=0, description="Daily budget cap in VND")
-    mode: Literal["solo", "group"] = Field(default="solo")
-    requester_user_id: Optional[str] = Field(default=None, description="Caller user ID for authorization checks")
-    mood: Optional[Mood] = Field(default=None, description="Required when mode is solo")
+    total_days: Optional[int] = Field(default=None, ge=1, description="Optional guardrail. Must match journey date range when provided.")
+    total_budget_vnd: int = Field(ge=0, description="Total trip budget in VND", examples=[7000000])
+    daily_budget_vnd: int = Field(ge=0, description="Daily budget cap in VND", examples=[1200000])
+    mode: Literal["solo", "group"] = Field(default="solo", description="Planning mode: solo mood or group mixed mood.")
+    requester_user_id: Optional[str] = Field(default=None, description="Caller user ID. Required in group mode for owner authorization.", examples=["user_123"])
+    mood: Optional[Mood] = Field(default=None, description="Required when mode is solo", examples=["NATURE_EXPLORE"])
     mood_distribution: Optional[dict[Mood, float]] = Field(
         default=None,
         description="Required when mode is group; weights should sum to ~1.0"
@@ -20,9 +20,9 @@ class AIPlanRequest(BaseModel):
         default=None,
         description="Optional starting point with keys: latitude, longitude"
     )
-    max_places_per_day: int = Field(default=5, ge=1, le=5)
-    must_include_categories: Optional[list[str]] = None
-    exclude_categories: Optional[list[str]] = None
+    max_places_per_day: int = Field(default=5, ge=1, le=5, description="Hard cap on places selected per day.")
+    must_include_categories: Optional[list[str]] = Field(default=None, description="Categories that must appear in itinerary when feasible.", examples=[["CAFE", "ATTRACTION"]])
+    exclude_categories: Optional[list[str]] = Field(default=None, description="Categories to always exclude.", examples=[["NIGHTLIFE"]])
 
     hours_per_day: float = Field(default=8, ge=1, le=16, description="Deprecated compatibility field")
     travel_style: Literal["sightseeing", "relaxing", "balanced"] = Field(
@@ -33,6 +33,37 @@ class AIPlanRequest(BaseModel):
         default=None,
         description="Specific place IDs to plan. If empty, AI will suggest from all places."
     )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "total_budget_vnd": 7000000,
+                    "daily_budget_vnd": 1200000,
+                    "mode": "solo",
+                    "mood": "NATURE_EXPLORE",
+                    "max_places_per_day": 4,
+                    "must_include_categories": ["ATTRACTION", "CAFE"],
+                    "exclude_categories": ["NIGHTLIFE"],
+                    "travel_style": "balanced"
+                },
+                {
+                    "total_budget_vnd": 9000000,
+                    "daily_budget_vnd": 1500000,
+                    "mode": "group",
+                    "requester_user_id": "owner_001",
+                    "mood_distribution": {
+                        "RESET_HEALING": 0.3,
+                        "CHILL_CAFE": 0.2,
+                        "NATURE_EXPLORE": 0.3,
+                        "FOOD_LOCAL": 0.2
+                    },
+                    "max_places_per_day": 5,
+                    "travel_style": "sightseeing"
+                }
+            ]
+        }
+    }
 
     @model_validator(mode="after")
     def validate_mode_fields(self):
@@ -63,7 +94,7 @@ class AIStopSuggestion(BaseModel):
     rating: float
     estimated_cost_vnd: int = 0
     final_score: float = 0.0
-    mood_score_breakdown: dict[str, float] = Field(default_factory=dict)
+    mood_score_breakdown: dict[str, float] = Field(default_factory=dict, description="Per-mood score components used in ranking.")
     is_hotel_anchor: bool = False
 
 class AIDayPlan(BaseModel):
@@ -78,7 +109,7 @@ class AIDayPlan(BaseModel):
     spent_today: int
     remaining_today: int
     saved_vs_budget: int
-    explanations: list[str] = []
+    explanations: list[str] = Field(default_factory=list)
     summary: str
     weather: Optional[dict] = None
 
@@ -111,7 +142,7 @@ class AIPlanResponse(BaseModel):
     accommodation_cost_vnd: int = 0
     num_nights: int = 0
     days: list[AIDayPlan]
-    candidate_pool: list[AICandidatePlace] = []
+    candidate_pool: list[AICandidatePlace] = Field(default_factory=list)
     planning_notes: list[str]
     algorithm_version: str = "1.0.0"
 
@@ -142,16 +173,16 @@ class CreateJourneyFromRelatedRequest(BaseModel):
         description="Maximum number of places to include in journey planning"
     )
     hours_per_day: float = Field(default=8, ge=1, le=16)
-    travel_style: Literal["sightseeing", "relaxing", "balanced"] = "balanced"
-    total_budget_vnd: int = 0
-    daily_budget_vnd: int = 0
-    mode: Literal["solo", "group"] = "solo"
-    mood: Optional[Mood] = "NATURE_EXPLORE"
+    travel_style: Literal["sightseeing", "relaxing", "balanced"] = Field(default="balanced")
+    total_budget_vnd: int = Field(default=0, ge=0)
+    daily_budget_vnd: int = Field(default=0, ge=0)
+    mode: Literal["solo", "group"] = Field(default="solo")
+    mood: Optional[Mood] = Field(default="NATURE_EXPLORE")
     auto_plan: bool = Field(
         default=True,
         description="If true, runs AI planner and fills journey days immediately"
     )
-    members: list[str] = []
+    members: list[str] = Field(default_factory=list)
     start_location: Optional[dict[str, float]] = Field(
         default=None,
         description="Optional start location with latitude and longitude"
@@ -165,6 +196,27 @@ class CreateJourneyFromRelatedRequest(BaseModel):
         description="Optional list of place categories to exclude"
     )
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "name": "Da Nang long weekend",
+                "owner_id": "owner_001",
+                "start_date": "2026-04-11T00:00:00Z",
+                "end_date": "2026-04-13T00:00:00Z",
+                "seed_place_id": "67fd123abc9876543210f111",
+                "max_places": 12,
+                "hours_per_day": 8,
+                "travel_style": "balanced",
+                "total_budget_vnd": 5000000,
+                "daily_budget_vnd": 1200000,
+                "mode": "solo",
+                "mood": "NATURE_EXPLORE",
+                "auto_plan": True,
+                "members": ["owner_001"]
+            }
+        }
+    }
+
 class CreateJourneyFromRelatedResponse(BaseModel):
     """Response for journey creation from related places."""
     journey_id: str
@@ -173,7 +225,7 @@ class CreateJourneyFromRelatedResponse(BaseModel):
     selected_place_ids: list[str]
     auto_planned: bool
     total_days: int
-    planning_notes: list[str] = []
+    planning_notes: list[str] = Field(default_factory=list)
     candidate_pool: Optional[list[AICandidatePlace]] = None
     days: Optional[list[AIDayPlan]] = None
     candidate_pool_size: Optional[int] = 0
