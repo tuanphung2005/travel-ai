@@ -146,15 +146,41 @@ class AIPlanResponse(BaseModel):
     planning_notes: list[str]
     algorithm_version: str = "1.0.0"
 
+class AIStopExplanation(BaseModel):
+    """Per-stop explanation of why a place was selected."""
+    place_id: str
+    place_name: str
+    day_number: int
+    final_score: float
+    mood_score_breakdown: dict[str, float] = Field(default_factory=dict)
+    why_selected: str
+    category: str
+    rating: float
+    estimated_cost_vnd: int
+
+
+class AIImprovementSuggestion(BaseModel):
+    """A concrete improvement suggestion for the current itinerary."""
+    type: str
+    message: str
+
+
 class AIExplanation(BaseModel):
     """Detailed explanation of AI planning decisions."""
     journey_id: str
+    # Generic algorithm description (backward-compatible)
     algorithm_description: str
     distance_calculation: str
     grouping_strategy: str
     style_adjustments: dict
     constraints_applied: list[str]
     place_selection_criteria: list[str]
+    # Journey-specific analysis
+    journey_stats: dict = Field(default_factory=dict, description="High-level trip statistics")
+    stop_explanations: list[AIStopExplanation] = Field(default_factory=list, description="Per-stop selection reasoning")
+    improvement_suggestions: list[AIImprovementSuggestion] = Field(default_factory=list, description="Actionable improvement tips")
+    reason_codes: list[str] = Field(default_factory=list)
+    planning_notes: list[str] = Field(default_factory=list)
 
 class CreateJourneyFromRelatedRequest(BaseModel):
     """Request body for creating a new journey from related places."""

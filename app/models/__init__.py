@@ -8,6 +8,8 @@ from .planning import (
     AICandidatePlace,
     AIPlanResponse,
     AIExplanation,
+    AIStopExplanation,
+    AIImprovementSuggestion,
     CreateJourneyFromRelatedRequest,
     CreateJourneyFromRelatedResponse,
 )
@@ -25,6 +27,8 @@ __all__ = [
     "AICandidatePlace",
     "AIPlanResponse",
     "AIExplanation",
+    "AIStopExplanation",
+    "AIImprovementSuggestion",
     "CreateJourneyFromRelatedRequest",
     "CreateJourneyFromRelatedResponse",
 ]

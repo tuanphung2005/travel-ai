@@ -6,6 +6,8 @@ from app.models import (
     AIPlanRequest,
     AIPlanResponse,
     AIExplanation,
+    AIStopExplanation,
+    AIImprovementSuggestion,
     CreateJourneyFromRelatedRequest,
     CreateJourneyFromRelatedResponse,
 )
@@ -15,7 +17,7 @@ from app.repositories import (
 )
 from app.ai_planner import ItineraryPlanner
 from app.planning_types import PlaceData
-from app.planning_utils import optimize_route_order, build_distance_matrix, estimate_travel_time
+from app.planning_utils import optimize_route_order, build_distance_matrix, estimate_travel_time, normalize_category
 from app.services.journey_planning import (
     parse_iso_datetime,
     create_initial_days,
@@ -360,15 +362,16 @@ async def generate_ai_plan(
     "/{journey_id}/ai-explain",
     response_model=AIExplanation,
     summary="Get AI planning explanation",
-    response_description="Human-readable explanation of planning algorithm",
+    response_description="Journey-specific explanation of planning decisions and improvement tips",
     description="""
-    Get a detailed explanation of how the AI planning algorithm works.
-    
-    This endpoint provides transparency into:
-    - How distances are calculated
-    - How places are grouped
-    - How travel style affects the plan
-    - What constraints are applied
+    Get a detailed, journey-specific explanation of how this itinerary was built.
+
+    This endpoint re-analyses the journey's saved stops and returns:
+    - **Per-stop reasoning** — why each place was selected (score, mood match, proximity)
+    - **Improvement suggestions** — budget headroom, missing food stops, long travel days, etc.
+    - **Algorithm transparency** — constraints, style config, and selection criteria used
+
+    The analysis is read-only; no changes are made to the journey.
     """,
     responses={
         404: {"description": "Journey not found"},
@@ -378,77 +381,229 @@ async def get_ai_explanation(
     journey_id: str = Path(..., description="Journey ID (Mongo ObjectId as string)", examples=["67fd123abc9876543210f111"])
 ):
     """
-    Get explanation of AI planning algorithm.
-    
-    Args:
-        journey_id: The journey's ObjectId
-    
-    Returns:
-        Detailed explanation of planning logic
+    Get a journey-specific explanation of AI planning decisions.
+
+    Re-runs the planner on the journey's existing stops to extract scoring data,
+    then derives improvement suggestions from the resulting plan.
     """
     journey_repo = get_journey_repository()
-    
-    # Verify journey exists
+    place_repo = get_place_repository()
+
+    # Fetch and validate journey
     journey = await journey_repo.get_by_id(journey_id)
     if not journey:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Journey with ID '{journey_id}' not found"
         )
-    
-    # Return generic explanation (not journey-specific)
-    # For journey-specific explanation, we'd need to store planning metadata
+
+    # Collect place IDs from saved stops
+    existing_place_ids: list[str] = []
+    for day in journey.get("days", []):
+        for stop in day.get("stops", []):
+            pid = stop.get("place_id")
+            if pid and pid not in existing_place_ids:
+                existing_place_ids.append(pid)
+
+    # Fetch place documents — fall back to top-rated if journey has no stops yet
+    if existing_place_ids:
+        place_docs = await place_repo.get_by_ids(existing_place_ids)
+    else:
+        place_docs = await place_repo.get_all_approved(limit=20)
+
+    places = to_place_data_list(place_docs) if place_docs else []
+
+    # Parse journey dates
+    start_date = parse_iso_datetime(journey.get("start_date"))
+    end_date = parse_iso_datetime(journey.get("end_date"))
+
+    # Re-run the planner (read-only) to obtain scoring breakdowns
+    planner = ItineraryPlanner(
+        places=places,
+        start_date=start_date,
+        end_date=end_date,
+        hours_per_day=8,
+        travel_style="balanced",
+        total_budget_vnd=0,
+        daily_budget_vnd=0,
+        mode="solo",
+        mood="NATURE_EXPLORE",
+    )
+    day_plans = planner.plan()
+
+    # ── Per-stop explanations ─────────────────────────────────────────────────
+    stop_explanations: list[AIStopExplanation] = []
+    for day in day_plans:
+        day_number = day["day_number"]
+        for stop in day["stops"]:
+            if stop.get("is_hotel_anchor"):
+                continue
+
+            place_name = stop.get("place_name", "Unknown")
+            final_score = stop.get("final_score", 0.0)
+            mood_breakdown: dict[str, float] = stop.get("mood_score_breakdown", {})
+            rating = stop.get("rating", 0.0)
+            category = stop.get("category", "ATTRACTION")
+            cost = stop.get("estimated_cost_vnd", 0)
+            distance_prev = stop.get("distance_from_previous_km", 0.0)
+
+            # Build human-readable "why selected" sentence
+            parts: list[str] = []
+            if final_score >= 60:
+                parts.append(f"strong algorithm score of {final_score:.1f}")
+            elif final_score >= 40:
+                parts.append(f"good algorithm score of {final_score:.1f}")
+            else:
+                parts.append(f"score of {final_score:.1f}")
+
+            if mood_breakdown:
+                top_mood = max(mood_breakdown, key=lambda m: mood_breakdown[m])
+                top_val = mood_breakdown[top_mood]
+                parts.append(f"best mood match is {top_mood} ({top_val:.1f}/100)")
+
+            if rating >= 4.5:
+                parts.append(f"highly rated at {rating}★")
+            elif rating >= 4.0:
+                parts.append(f"well rated at {rating}★")
+
+            if distance_prev > 0:
+                if distance_prev < 1.0:
+                    parts.append("very close to the previous stop")
+                elif distance_prev < 3.0:
+                    parts.append(f"only {distance_prev:.1f} km from the previous stop")
+                else:
+                    parts.append(f"{distance_prev:.1f} km from the previous stop")
+
+            why_selected = (
+                f"Selected for its {', '.join(parts)}."
+                if parts
+                else "Selected based on overall algorithm ranking."
+            )
+
+            stop_explanations.append(
+                AIStopExplanation(
+                    place_id=stop.get("place_id", ""),
+                    place_name=place_name,
+                    day_number=day_number,
+                    final_score=final_score,
+                    mood_score_breakdown=mood_breakdown,
+                    why_selected=why_selected,
+                    category=category,
+                    rating=rating,
+                    estimated_cost_vnd=cost,
+                )
+            )
+
+    # ── Improvement suggestions ───────────────────────────────────────────────
+    suggestions: list[AIImprovementSuggestion] = []
+
+    for day in day_plans:
+        day_number = day["day_number"]
+        real_stops = [s for s in day["stops"] if not s.get("is_hotel_anchor")]
+
+        # LONG_TRAVEL — more than 120 min total travel time on one day
+        travel_time = day.get("total_travel_time_minutes", 0)
+        if travel_time > 120:
+            suggestions.append(
+                AIImprovementSuggestion(
+                    type="LONG_TRAVEL",
+                    message=(
+                        f"Day {day_number} has {travel_time} minutes of travel time. "
+                        "Consider grouping closer places or reducing the number of stops."
+                    ),
+                )
+            )
+
+        # FEW_STOPS — only 1 stop on a day (pool exhaustion or tight constraints)
+        if len(real_stops) == 1:
+            suggestions.append(
+                AIImprovementSuggestion(
+                    type="FEW_STOPS",
+                    message=(
+                        f"Day {day_number} has only 1 stop, which may mean the place "
+                        "pool is too small. Try adding more places or relaxing budget/category filters."
+                    ),
+                )
+            )
+
+        # CATEGORY_GAP — no food/restaurant stop on the day
+        categories_today = {
+            normalize_category(s.get("category", ""), [])
+            for s in real_stops
+        }
+        food_categories = {"RESTAURANT", "FOOD", "STREET_FOOD", "CAFE", "TEAHOUSE", "BAKERY", "MARKET"}
+        if real_stops and not categories_today.intersection(food_categories):
+            suggestions.append(
+                AIImprovementSuggestion(
+                    type="CATEGORY_GAP",
+                    message=(
+                        f"Day {day_number} has no food or café stop. "
+                        "Add a restaurant or café to make the day more balanced."
+                    ),
+                )
+            )
+
+        # LOW_SCORE_STOP — any stop scores below 20
+        for stop in real_stops:
+            score = stop.get("final_score", 0.0)
+            if score < 20:
+                suggestions.append(
+                    AIImprovementSuggestion(
+                        type="LOW_SCORE_STOP",
+                        message=(
+                            f"Day {day_number}: '{stop.get('place_name')}' has a low score "
+                            f"({score:.1f}) for your mood/style. Consider swapping it for a "
+                            "higher-rated or better mood-matched place."
+                        ),
+                    )
+                )
+
+    # BUDGET_HEADROOM — if there was a daily budget and spending was < 70%
+    total_cost = sum(d.get("total_estimated_cost_vnd", 0) for d in day_plans)
+    total_days = (end_date.date() - start_date.date()).days + 1
+    implied_budget = planner.daily_budget_vnd * total_days
+    if implied_budget > 0 and total_cost < implied_budget * 0.7:
+        headroom = implied_budget - total_cost
+        suggestions.append(
+            AIImprovementSuggestion(
+                type="BUDGET_HEADROOM",
+                message=(
+                    f"The itinerary uses only {total_cost:,} VND of a potential "
+                    f"{implied_budget:,} VND budget (~{int(total_cost / implied_budget * 100)}% utilised). "
+                    f"You have {headroom:,} VND of headroom — consider adding higher-quality places."
+                ),
+            )
+        )
+
+    # ── Generic algorithm explanation (backward-compat) ───────────────────────
+    generic = planner.get_explanation()
+
+    # ── Journey stats ─────────────────────────────────────────────────────────
+    journey_stats = {
+        "total_days": total_days,
+        "total_stops": sum(
+            len([s for s in d["stops"] if not s.get("is_hotel_anchor")])
+            for d in day_plans
+        ),
+        "total_estimated_cost_vnd": total_cost,
+        "total_distance_km": sum(d.get("total_distance_km", 0.0) for d in day_plans),
+        "total_travel_time_minutes": sum(d.get("total_travel_time_minutes", 0) for d in day_plans),
+        "total_visit_duration_minutes": sum(d.get("total_duration_minutes", 0) for d in day_plans),
+    }
+
     return AIExplanation(
         journey_id=journey_id,
-        algorithm_description=(
-            "This itinerary was generated using a deterministic planning algorithm "
-            "that applies mood scoring, budget constraints, score/cost greedy day packing, "
-            "and route optimization via nearest-neighbor + optional 2-opt improvement. "
-            "No machine learning or randomness is involved."
-        ),
-        distance_calculation=(
-            "Distances between places are calculated using the Haversine formula, "
-            "which computes the great-circle distance between two points on Earth's surface. "
-            "Average travel speed is assumed to be 25 km/h for travel-time estimation."
-        ),
-        grouping_strategy=(
-            "Places are filtered and ranked into a candidate pool, then selected day-by-day "
-            "from remaining places with constraints for budget, max places/day, and category diversity."
-        ),
-        style_adjustments={
-            "sightseeing": {
-                "description": "Fast-paced exploration with more stops",
-                "base_duration": "~45 minutes per stop",
-                "max_stops": 5,
-                "buffer_time": "10 minutes between stops"
-            },
-            "relaxing": {
-                "description": "Leisurely pace with fewer stops",
-                "base_duration": "~120 minutes per stop",
-                "max_stops": 5,
-                "buffer_time": "30 minutes between stops"
-            },
-            "balanced": {
-                "description": "Moderate pace with balanced exploration",
-                "base_duration": "~75 minutes per stop",
-                "max_stops": 5,
-                "buffer_time": "20 minutes between stops"
-            }
-        },
-        constraints_applied=[
-            "Hard cap: Maximum 5 stops per day",
-            "Budget cap: day total must not exceed daily budget",
-            "Total trip budget respected when provided",
-            "No duplicate places across days",
-            "Travel time and available hours/day must remain feasible"
-        ],
-        place_selection_criteria=[
-            "Mood score: weighted by solo mood or group mood distribution",
-            "Cost efficiency: greedy selection by finalScore/cost",
-            "RESET_HEALING rules: favor higher healing score and lower crowd",
-            "CHILL_CAFE rule: attempts at least one cafe/day if feasible",
-            "Route order: nearest-neighbor with optional 2-opt refinement"
-        ]
+        algorithm_description=generic["algorithm_description"],
+        distance_calculation=generic["distance_calculation"],
+        grouping_strategy=generic["grouping_strategy"],
+        style_adjustments=generic["style_adjustments"],
+        constraints_applied=generic["constraints_applied"],
+        place_selection_criteria=generic["place_selection_criteria"],
+        journey_stats=journey_stats,
+        stop_explanations=stop_explanations,
+        improvement_suggestions=suggestions,
+        reason_codes=sorted(set(planner.reason_codes)),
+        planning_notes=planner.planning_notes,
     )
 
 
